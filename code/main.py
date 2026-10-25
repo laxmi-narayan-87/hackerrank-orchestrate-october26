@@ -312,8 +312,8 @@ def audit_case(req,ids,audits,index,activities=None):
      rid=m.group(0)
     if len(group_ids)>1 and subject_hit and rid not in known and not any(contains_identifier(line.casefold(),token) for token in identifiers):continue
     sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
-    if any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')) or ('user_profile' in combined and 'not_found' in combined):op,st='VERIFY_RECORD_ABSENT','ABSENT'
-    elif rid.startswith('audit_record_') and any(q in combined for q in ('rows=1','result=hit','result=found','security_audit_log | found')):op,st='VERIFY_RECORD_PRESENT','PRESENT'
+    if rid.startswith('audit_record_') and any(q in combined for q in ('rows=1','result=hit','result=found','security_audit_log | found','security_audit_log|found')):op,st='VERIFY_RECORD_PRESENT','PRESENT'
+    elif any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')) or ('user_profile' in combined and 'not_found' in combined):op,st='VERIFY_RECORD_ABSENT','ABSENT'
     elif rid.startswith('analytics_') and ('anonymized' in combined or all(q in combined for q in ('email=null','phone=null','email_hash=null'))):op,st='VERIFY_RECORD_ANONYMIZED','ANONYMIZED'
     elif rid.startswith('analytics_') and ('identifiable' in combined or 'analytics_identity_scan' in combined or any(q in combined for q in ('email=','phone=','email_hash='))):op,st='REPORT_EXPOSED_PII','PRESENT'
     elif rid.startswith('support_') and ('support_attachment' in combined and ('found' in combined or 'present' in combined) or 'attachment_pii_scan' in combined):op,st='REPORT_REMAINING_RECORD','PRESENT'
