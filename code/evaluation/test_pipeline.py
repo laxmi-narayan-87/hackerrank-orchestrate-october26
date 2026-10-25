@@ -134,7 +134,7 @@ class PolicyRegression(unittest.TestCase):
  def test_handover_text_statuses_are_classified_by_category(self):
   req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
   ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
-  body='2026-09-01T00:00:00Z | account_service | account_1 | USER_PROFILE | NOT_FOUND | x@example.com\\n2026-09-01T00:00:00Z | security_service | audit_record_1 | SECURITY_AUDIT_LOG | FOUND | user_1'
+  body='2026-09-01T00:00:00Z | account_service | account_1 | USER_PROFILE | NOT_FOUND | x@example.com\n2026-09-01T00:00:00Z | security_service | audit_record_1 | SECURITY_AUDIT_LOG | FOUND | user_1'
   ix=main.Index();ix.text=[('evidence_handover',main.dt('2026-09-01T00:00:00Z'),'handover.txt',body)]
   status,steps=main.audit_case(req,ids,[],ix,[])
   self.assertEqual(status,'COMPLETE')
