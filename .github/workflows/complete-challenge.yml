@@ -1,0 +1,66 @@
+name: Complete challenge outputs
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "code/**"
+      - "dataset/**"
+      - ".github/workflows/complete-challenge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run regression tests
+        run: python -m unittest discover -s code/evaluation -p 'test_*.py' -v
+
+      - name: Generate full 518-case output
+        run: python code/main.py --dataset dataset --input dataset/deletion_requests.csv --output output.csv
+
+      - name: Remove citations from proposed future actions
+        run: python code/evaluation/normalize_proposals.py output.csv
+
+      - name: Validate output schema and evidence references
+        run: python code/evaluation/main.py --input dataset/deletion_requests.csv --output output.csv --dataset dataset
+
+      - name: Score against public sample
+        continue-on-error: true
+        run: |
+          python code/main.py --dataset dataset --input dataset/sample_deletion_requests.csv --output /tmp/sample_prediction.csv
+          python code/evaluation/normalize_proposals.py /tmp/sample_prediction.csv
+          python code/evaluation/main.py --input dataset/sample_deletion_requests.csv --output /tmp/sample_prediction.csv --dataset dataset --compare-sample
+
+      - name: Build submission code archive
+        run: |
+          rm -f code.zip
+          zip -r code.zip code -x '*/__pycache__/*' '*.pyc'
+
+      - name: Upload outputs for review
+        uses: actions/upload-artifact@v4
+        with:
+          name: challenge-submission-${{ github.run_number }}
+          path: |
+            output.csv
+            code.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Commit generated submission files to this branch
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Generate and validate challenge submission artifacts"
+          file_pattern: output.csv code.zip
