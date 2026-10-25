@@ -305,7 +305,7 @@ def audit_case(req,ids,audits,index,activities=None):
    if not subject_hit and not (len(group_ids)==1 and len(known_in_group)==1):continue
    for line,line_time in group:
     m=re.search(r"resource[_ ]id\s*[:=]\s*[\"']?([a-z0-9_-]+)",line,re.I)
-    if m:rid=m.group(1)
+    if m:rid=m.group(1) if m.lastindex else m.group(0)
     else:
      m=re.search(resource_pattern,line,re.I)
      if not m:continue
