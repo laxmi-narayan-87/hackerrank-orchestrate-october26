@@ -30,7 +30,7 @@ class Rec:
  @property
  def time(self):return self.timestamp or self.captured
 def infer(path,d,ctx=None):
- ctx=ctx or {};low=(path+' '+' '.join(str(v) for v in ctx.values())).casefold();s=str(d.get('data_store') or d.get('origin_system') or d.get('system_id') or ctx.get('data_store') or ctx.get('origin_system') or '').casefold();c=str(d.get('collection') or d.get('collection_name') or ctx.get('collection') or ctx.get('collection_name') or '').casefold()
+ ctx=ctx or {};low=(path+' '+' '.join(str(v) for v in ctx.values())+' '+' '.join(f'{k} {v}' for k,v in d.items())).casefold();s=str(d.get('data_store') or d.get('origin_system') or d.get('system_id') or ctx.get('data_store') or ctx.get('origin_system') or '').casefold();c=str(d.get('collection') or d.get('collection_name') or ctx.get('collection') or ctx.get('collection_name') or '').casefold()
  if not s:
   for key,val in [('tombstone','identity_service'),('identity_service','identity_service'),('account','account_service'),('search','search_service'),('analytics','analytics_platform'),('support','support_platform'),('backup','backup_service'),('export','export_service'),('connector','integration_service'),('marketing','marketing_platform'),('security','security_service'),('email_delivery','email_delivery_service'),('cache','cache_service'),('telemetry','telemetry_service'),('object_storage','object_storage')]:
    if key in low:s=val;break
@@ -79,7 +79,12 @@ def sqlrecs(path,eid,captured):
  return out,None
 class Index:
  def __init__(self):self.records=[];self.text=[];self.warnings=[]
- def at(self,cut):return [r for r in self.records if r.time and r.time<=cut],[(eid,t,p,b) for eid,t,p,b in self.text if t and t<=cut]
+ def at(self,cut):
+  # The manifest capture time is a hard upper bound. Embedded timestamps never
+  # make evidence from a later-captured file valid for an earlier audit.
+  records=[r for r in self.records if r.captured and r.captured<=cut and (not r.timestamp or r.timestamp<=cut)]
+  text=[(eid,t,p,b) for eid,t,p,b in self.text if t and t<=cut]
+  return records,text
 def make_index(dataset):
  idx=Index()
  for m in readcsv(dataset/'evidence_files.csv'):
@@ -134,8 +139,17 @@ def resolve(req,identities,audits,cut):
  x['hashes'].update(hashlib.sha256(e.encode()).hexdigest() for e in x['emails']);return x
 def matches(r,s):
  needles=set().union(s['emails'],s['phones'],s['names'],s['hashes'],{n(s['user_id'])});needles.discard('');return bool(flat(r.data)&needles)
+def has_direct_pii(obj):
+ fields={'name','full_name','email','phone','email_hash','requester_email','requester_name','requester_phone','owner_email','customer_email','customer_phone'}
+ if isinstance(obj,dict):
+  for key,value in obj.items():
+   if str(key).casefold() in fields and value is not None and not isinstance(value,(dict,list)) and str(value).strip():return True
+   if has_direct_pii(value):return True
+ elif isinstance(obj,list):
+  return any(has_direct_pii(v) for v in obj)
+ return False
 def classify(r):
- d=r.data;sy=r.system;co=r.collection;rid=r.rid;s=(sy+' '+co+' '+rid).casefold();vals=flat(d);keys={'name','full_name','email','phone','email_hash','requester_email','requester_name','requester_phone','owner_email'};exposed=any(d.get(k) for k in keys) or bool(vals&{'name','full_name','email','phone','email_hash'})
+ d=r.data;sy=r.system;co=r.collection;rid=r.rid;s=(sy+' '+co+' '+rid).casefold();exposed=has_direct_pii(d)
  if 'tombstone' in s or 'deleted_customer_references' in s:return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_REDACTED','REDACTED')
  if 'connector' in s or 'integration' in sy or rid.startswith('data_flow_'):
   v=d.get('enabled')
