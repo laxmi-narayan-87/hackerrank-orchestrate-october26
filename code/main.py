@@ -30,7 +30,7 @@ class Rec:
  @property
  def time(self):return self.timestamp or self.captured
 def infer(path,d,ctx=None):
- ctx=ctx or {};low=(path+' '+' '.join(str(v) for v in ctx.values())+' '+' '.join(f'{k} {v}' for k,v in d.items())).casefold();s=str(d.get('data_store') or d.get('origin_system') or d.get('system_id') or ctx.get('data_store') or ctx.get('origin_system') or '').casefold();c=str(d.get('collection') or d.get('collection_name') or ctx.get('collection') or ctx.get('collection_name') or '').casefold()
+ ctx=ctx or {};low=(path+' '+' '.join(str(v) for v in ctx.values())+' '+' '.join(f'{k} {v}' for k,v in d.items())).casefold();rid=str(d.get('resource_id') or '').casefold();prefix_s=next((val for prefix,val in [('tombstone_','identity_service'),('audit_record_','security_service'),('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service'),('marketing_','marketing_platform'),('telemetry_','telemetry_service'),('object_storage_','object_storage')] if rid.startswith(prefix)),'');s=prefix_s or str(d.get('data_store') or d.get('origin_system') or d.get('system_id') or ctx.get('data_store') or ctx.get('origin_system') or '').casefold();c=str(d.get('collection') or d.get('collection_name') or ctx.get('collection') or ctx.get('collection_name') or '').casefold()
  if not s:
   for key,val in [('tombstone','identity_service'),('identity_service','identity_service'),('customer_profiles','account_service'),('customer_accounts','account_service'),('account','account_service'),('audit_record','security_service'),('data_flow','integration_service'),('search','search_service'),('analytics','analytics_platform'),('support','support_platform'),('backup','backup_service'),('export','export_service'),('connector','integration_service'),('marketing','marketing_platform'),('security','security_service'),('email_delivery','email_delivery_service'),('cache','cache_service'),('telemetry','telemetry_service'),('object_storage','object_storage')]:
    if key in low:s=val;break
@@ -260,6 +260,9 @@ def contains_identifier(text,token):
   return re.search(r'(?<![A-Za-z0-9_-])'+re.escape(token)+r'(?![A-Za-z0-9_-])',text,re.I) is not None
  if re.fullmatch(r'[a-f0-9]{40,64}',token):return re.search(r'(?<![a-f0-9])'+re.escape(token)+r'(?![a-f0-9])',text,re.I) is not None
  return token in text
+def contains_name(text,token):
+ if not token:return False
+ return re.search(r'(?<![A-Za-z])'+re.escape(token)+r'(?![A-Za-z])',text,re.I) is not None
 def evidence_time(r):
  # Snapshot capture time represents the state captured; readback/activity rows have event times.
  return (r.timestamp or r.captured) if r.collection in {'readback','activity_check'} else (r.captured or r.timestamp)
@@ -277,8 +280,8 @@ def audit_case(req,ids,audits,index,activities=None):
  for r in records:
   if matches(r,subject):
    op,st=classify(r,cut);add_match(matched,r,op,st)
- identifiers={x for x in (subject['emails']|subject['phones']|subject['hashes']|{n(subject['user_id'])}) if x}
- resource_pattern=r'\b(?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_[a-z0-9_-]+\b'
+ identifiers={x for x in (subject['emails']|subject['phones']|subject['hashes']|{n(subject['user_id'])}) if x};name_identifiers={x for x in subject['names'] if x}
+ resource_pattern=r'\b(?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_(?:[0-9][a-z0-9_-]*|(?:attachment|message|conversation|query|profile|archive|record)_[0-9][a-z0-9_-]*)\b'
  for eid,t,path,body in texts:
   parsed=[]
   for line in body.splitlines():
@@ -286,8 +289,9 @@ def audit_case(req,ids,audits,index,activities=None):
    line_time=dt(stamp.group(1)) if stamp else None
    if line_time and line_time>cut:continue
    parsed.append((line,line_time))
-  doc_ids=set(re.findall(resource_pattern,body,re.I))
-  if path.casefold().endswith(('.pdf','.png','.jpg','.jpeg','.webp')) and len(doc_ids)==1 and any(contains_identifier(body.casefold(),token) for token in identifiers):
+  doc_ids=set(re.findall(resource_pattern,body,re.I));is_doc=path.casefold().endswith(('.pdf','.png','.jpg','.jpeg','.webp'))
+  doc_subject=any(contains_identifier(body.casefold(),token) for token in identifiers) or any(contains_name(body.casefold(),name) for name in name_identifiers)
+  if is_doc and len(doc_ids)==1 and doc_subject:
    groups={'document':parsed}
   else:
    groups={}
@@ -299,7 +303,7 @@ def audit_case(req,ids,audits,index,activities=None):
   for group in groups.values():
    combined=' '.join(line for line,_ in group).casefold()
    group_ids=set(re.findall(resource_pattern,combined,re.I))
-   subject_hit=any(contains_identifier(combined,token) for token in identifiers)
+   subject_hit=any(contains_identifier(combined,token) for token in identifiers) or (is_doc and any(contains_name(combined,name) for name in name_identifiers))
    known_in_group=group_ids & known
    # A trace without subject identifiers may update only one previously linked resource.
    if not subject_hit and not (len(group_ids)==1 and len(known_in_group)==1):continue
@@ -314,6 +318,7 @@ def audit_case(req,ids,audits,index,activities=None):
     sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
     if rid.startswith('audit_record_') and any(q in combined for q in ('rows=1','result=hit','result=found','security_audit_log | found','security_audit_log|found')):op,st='VERIFY_RECORD_PRESENT','PRESENT'
     elif any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')) or ('user_profile' in combined and 'not_found' in combined):op,st='VERIFY_RECORD_ABSENT','ABSENT'
+    elif rid.startswith('analytics_') and ('contact_lookup' in combined or 'email_opt_in=' in combined):op,st='REPORT_REMAINING_RECORD','PRESENT'
     elif rid.startswith('analytics_') and ('anonymized' in combined or all(q in combined for q in ('email=null','phone=null','email_hash=null'))):op,st='VERIFY_RECORD_ANONYMIZED','ANONYMIZED'
     elif rid.startswith('analytics_') and ('identifiable' in combined or 'analytics_identity_scan' in combined or any(q in combined for q in ('email=','phone=','email_hash='))):op,st='REPORT_EXPOSED_PII','PRESENT'
     elif rid.startswith('support_') and ('support_attachment' in combined and ('found' in combined or 'present' in combined) or 'attachment_pii_scan' in combined):op,st='REPORT_REMAINING_RECORD','PRESENT'
@@ -368,11 +373,11 @@ def audit_case(req,ids,audits,index,activities=None):
     rid=str(a.get('resource_id') or '')
     if (target=='account_service' and not rid.startswith('account_')) or (target=='analytics_platform' and not rid.startswith('analytics_')):continue
     distance=abs((at-report).total_seconds())
-    if distance<=5400:candidates.append((distance,a))
+    if distance<=600:candidates.append((distance,a))
    if not candidates:continue
-   nearest=min(x[0] for x in candidates);best=[a for distance,a in candidates if distance==nearest]
-   if len(best)!=1:continue
-   a=best[0];rid=str(a.get('resource_id') or '')
+   if target=='analytics_platform' and not re.search(r'\b(analytics|telemetry|anonymi[sz]e|anonymous statistics)\b',str(req.get('request_text') or ''),re.I):continue
+   if len(candidates)!=1:continue
+   a=candidates[0][1];rid=str(a.get('resource_id') or '')
    linked=[r for r in records if r.system==target and r.rid==rid]
    if linked:
     newest=max(linked,key=lambda r:evidence_time(r) or datetime.min.replace(tzinfo=timezone.utc))
