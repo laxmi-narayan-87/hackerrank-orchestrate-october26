@@ -79,9 +79,10 @@ def sqlrecs(path,eid,captured):
     # Preserve direct SQL columns as evidence; many snapshots do not wrap rows in JSON.
     for key,value in rawrow.items():
      if key not in {rid,dc,sc,cc,tc} and value is not None:payload.setdefault(key,value)
-    payload.setdefault('resource_id',str(rawrow.get(rid)));payload.setdefault('table_name',table);payload.setdefault('collection',table)
-    if sc and rawrow.get(sc):payload.setdefault('data_store',rawrow[sc])
+    payload.setdefault('resource_id',str(rawrow.get(rid)));payload.setdefault('table_name',table)
     if cc and rawrow.get(cc):payload.setdefault('collection',rawrow[cc])
+    else:payload.setdefault('collection',table)
+    if sc and rawrow.get(sc):payload.setdefault('data_store',rawrow[sc])
     s,c=infer(str(path),payload);out.append(Rec(eid,captured,s,c,str(rawrow[rid]),payload,dt(str(rawrow.get(tc) or '')) if tc else None))
  except sqlite3.Error as e:return [],f'SQL parse error: {e}'
  finally:db.close()
