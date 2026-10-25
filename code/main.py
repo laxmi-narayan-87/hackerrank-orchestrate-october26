@@ -295,10 +295,10 @@ def audit_case(req,ids,audits,index,activities=None):
     tr=re.search(r'\btrace_id=([^\s]+)',line,re.I)
     group=tr.group(1) if tr else f'line_{ix}'
     groups.setdefault(group,[]).append((line,line_time))
+  known={key[1] for key in matched}
   for group in groups.values():
    combined=' '.join(line for line,_ in group).casefold()
    group_ids=set(re.findall(resource_pattern,combined,re.I))
-   known={key[1] for key in matched}
    subject_hit=any(contains_identifier(combined,token) for token in identifiers)
    known_in_group=group_ids & known
    # A trace without subject identifiers may update only one previously linked resource.
@@ -337,7 +337,7 @@ def audit_case(req,ids,audits,index,activities=None):
      if rid.startswith('data_flow_'):op,st='REPORT_ACTIVE_DATA_FLOW','ACTIVE'
      if rid.startswith('backup_'):op,st='REPORT_RESTORE_RISK','ACTIVE'
     else:continue
-    rr=Rec(eid,t,sy,'readback',rid,{'resource_id':rid,'event':combined},line_time or t);add_match(matched,rr,op,st)
+    rr=Rec(eid,t,sy,'readback',rid,{'resource_id':rid,'event':combined},line_time or t);add_match(matched,rr,op,st);known.add(rid)
  # Explicit state-check activity is proof; generic operation results are not.
  for a in activities or []:
   at=dt(a.get('event_time'))
