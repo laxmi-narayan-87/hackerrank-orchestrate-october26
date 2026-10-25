@@ -346,7 +346,8 @@ def audit_case(req,ids,audits,index,activities=None):
    rop,rst,vop=q;rem.append(step('REMEDIATION',f['system_id'],f['resource_id'],rop,rst,''));verify.append(step('VERIFICATION',f['system_id'],f['resource_id'],vop,rst,''))
  if findings:return 'INCOMPLETE',sortsteps(findings+rem+verify)
  if verify:return 'COMPLETE',sortsteps(verify)
- return 'INCOMPLETE',[]def run(dataset,input_path,output):
+ return 'INCOMPLETE',[]
+def run(dataset,input_path,output):
  requests=readcsv(input_path);ids=readcsv(dataset/'user_identities.csv');audits=readcsv(dataset/'user_audit_log.csv');activities=readcsv(dataset/'system_activity.csv') if (dataset/'system_activity.csv').is_file() else [];ix=make_index(dataset);rows=[]
  for req in requests:
   status,steps=audit_case(req,ids,audits,ix,activities);rows.append({'case_id':req.get('case_id',''),'deletion_status':status,'steps_json':json.dumps(steps,ensure_ascii=False,separators=(',',':'))})
