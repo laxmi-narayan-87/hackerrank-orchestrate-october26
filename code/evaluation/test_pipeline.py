@@ -88,4 +88,40 @@ class PolicyRegression(unittest.TestCase):
    result=ev.validate(out,inp,manifest)
    self.assertTrue(result['valid'],result['issues'])
 
+
+ def test_japanese_deletion_intent_and_deletion_audit_language(self):
+  self.assertTrue(main.authorized('このメールアドレスに関連するアカウントの完全な削除を依頼します。'))
+  self.assertTrue(main.authorized('Please confirm that the profile is gone and audit the deletion.'))
+ def test_trace_id_correlates_identifier_and_resource(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  ix=main.Index();ix.text=[('evidence_log',main.dt('2026-09-01T00:00:00Z'),'lookup.log','2026-09-01T00:00:00Z trace_id=abc event=profile_lookup_started lookup_key="x@example.com"\\n2026-09-01T00:00:01Z trace_id=abc resource_id=account_1 event=profile_lookup_completed rows=0 http_status=404')]
+  status,steps=main.audit_case(req,ids,[],ix,[])
+  self.assertEqual(status,'COMPLETE')
+  self.assertEqual([(x['resource_id'],x['operation']) for x in steps],[('account_1','VERIFY_RECORD_ABSENT')])
+ def test_similar_email_in_text_does_not_match(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  ix=main.Index();ix.text=[('evidence_log',main.dt('2026-09-01T00:00:00Z'),'lookup.log','2026-09-01T00:00:00Z trace_id=abc lookup_key="x@example.com.evil"\\n2026-09-01T00:00:01Z trace_id=abc resource_id=account_2 rows=0 http_status=404')]
+  status,steps=main.audit_case(req,ids,[],ix,[])
+  self.assertEqual(status,'INCOMPLETE')
+  self.assertEqual(steps,[])
+ def test_latest_readback_overrides_stale_profile(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-03T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  ix=main.Index()
+  ix.records=[
+   main.Rec('old_snapshot',main.dt('2026-09-01T00:00:00Z'),'account_service','customer_profiles','account_1',{'resource_id':'account_1','user_id':'user_1','email':'x@example.com','account_status':'ACTIVE'}),
+   main.Rec('latest_readback',main.dt('2026-09-02T00:00:00Z'),'account_service','readback','account_1',{'resource_id':'account_1','email':'x@example.com','status_code':404},main.dt('2026-09-02T00:00:00Z'))
+  ]
+  status,steps=main.audit_case(req,ids,[],ix,[])
+  self.assertEqual(status,'COMPLETE')
+  self.assertEqual([(x['operation'],x['evidence_id']) for x in steps],[('VERIFY_RECORD_ABSENT','latest_readback')])
+ def test_nested_service_export_infers_system_from_parent_key(self):
+  obj={'service_exports':{'account_service':{'profile_lookups':[{'resource_id':'account_1','status_code':404,'profile':None}]}}}
+  recs=main.jsonrecs(obj,'e1',main.dt('2026-09-01T00:00:00Z'),'service_resource_export.json')
+  self.assertEqual(len(recs),1)
+  self.assertEqual(recs[0].system,'account_service')
+  self.assertEqual(main.classify(recs[0]),('VERIFY_RECORD_ABSENT','ABSENT'))
+
 if __name__=='__main__':unittest.main(verbosity=2)
