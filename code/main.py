@@ -108,20 +108,29 @@ def make_index(dataset):
   except (OSError,json.JSONDecodeError,UnicodeError) as e:idx.warnings.append(f'{eid}: {type(e).__name__}: {e}')
  return idx
 NONDEL=[r'\b(access|export|download|copy of my data|correct|rectify|update my (?:name|email|address)|change my email|opt[ -]?out|unsubscribe|stop (?:the )?marketing|marketing preferences|recover my account)\b',r'\b(acceso a mis datos|descargar mis datos|exportar mis datos|corregir mis datos|actualizar mis datos|cancelar la suscripci[oó]n|dejar de recibir publicidad)\b',r'\b(acc[eè]s [àa] mes donn[eé]es|exporter mes donn[eé]es|corriger mes donn[eé]es|modifier mon adresse e-mail)\b']
-DEL=[r'\b(delete|deletion|erase|erasure|remove my (?:account|profile|personal data|personal information)|close my account|close this account|account closure|permanent(?:ly)? account deletion|forget me|right to be forgotten|wipe my data|purge my data)\b',r'\b(eliminar|eliminaci[oó]n|borrar|suprimir|supresi[oó]n|cerrar mi cuenta|borrado permanente)\b',r'\b(supprimer|suppression|effacer|cl[oô]turer mon compte|effacement d[eé]finitif)\b',r'\b(l[oö]schen|konto l[oö]schen|konto schlie(?:ß|ss)en|daten entfernen)\b',r'\b(削除|アカウント.*閉鎖|アカウント.*消去|データ.*消去)\b',r'\b(cancellare|eliminare|cancellazione|chiudere il mio account)\b',r'\b(удалить|удаление|закрыть аккаунт)\b']
+DEL=[r'\b(delete|deletion|erase|erasure|remove my (?:account|profile|personal data|personal information)|close my account|close this account|account closure|permanent(?:ly)? account deletion|forget me|right to be forgotten|wipe my data|purge my data)\b',r'\b(eliminar|eliminaci[oó]n|borrar|suprimir|supresi[oó]n|cerrar mi cuenta|borrado permanente)\b',r'\b(supprimer|suppression|effacer|cl[oô]turer mon compte|effacement d[eé]finitif)\b',r'\b(l[oö]schen|konto l[oö]schen|konto schlie(?:ß|ss)en|daten entfernen)\b',r'\b(削除|アカウント.*閉鎖|アカウント.*消去|データ.*消去)\b',r'\b(cancellare|eliminare|cancellazione|chiudere il mio account)\b',r'\b(удалить|удаление|закрыть аккаунт)\b',r'\b(?:account|profile|personal data|personal information|this account|it)\b.{0,50}\b(?:closed|deleted|erased|removed|purged|wiped)\b',r'\b(?:would like|want|need|request|asking|please|can you|could you)\b.{0,50}\b(?:close|closed|delete|deleted|erase|erased|remove|removed|purge|purged|wipe|wiped)\b',r'\bdelet(?:e|ed|ing|ion|ions)\b',r'\b(?:delete|deleting|deleted|erase|erased|remove|removed|close|closed|closing|deactivate|deactivated)\b.{0,60}\b(?:my|this|the|an?)?\s*(?:account|profile|personal data|personal information|data)\b',r'\b(?:account|profile|personal data|personal information)\b.{0,60}\b(?:delet(?:e|ed|ing|ion)|eras(?:e|ed|ure)|remov(?:e|ed|al)|clos(?:e|ed|ing))\b']
 def authorized(text):
  t=(text or '').casefold()
- if any(re.search(p,t,re.I) for p in NONDEL):return False
+ # If a request explicitly asks for deletion, accompanying references to an old
+ # export/download link or marketing do not turn it into a non-deletion request.
  return any(re.search(p,t,re.I) for p in DEL)
+
 def resolve(req,identities,audits,cut):
- email=n(req.get('email'));cur={x.get('user_id',''):x for x in identities if x.get('user_id')};found={}
- for x in identities:
-  if n(x.get('email'))==email:found[x.get('user_id','')]={'current':x,'user_id':x.get('user_id',''),'emails':set(),'phones':set(),'names':set(),'hashes':set()}
- for a in audits:
-  t=dt(a.get('event_time'))
-  if not t or t>cut or (a.get('field_name') or '').casefold()!='email':continue
-  if email in {n(a.get('old_value')),n(a.get('new_value'))} and a.get('user_id') in cur:
-   u=a['user_id'];found.setdefault(u,{'current':cur[u],'user_id':u,'emails':set(),'phones':set(),'names':set(),'hashes':set()})
+ email=n(req.get('email'));cur={x.get('user_id',''):x for x in identities if x.get('user_id')}
+ current=[x for x in identities if n(x.get('email'))==email]
+ found={}
+ # Prefer a unique current exact-email match. Historical audit events can reuse
+ # an address after reassignment; they must not make an unambiguous current match ambiguous.
+ if len(current)>1:return None
+ if len(current)==1:
+  x=current[0];uid=x.get('user_id','')
+  found[uid]={'current':x,'user_id':uid,'emails':set(),'phones':set(),'names':set(),'hashes':set()}
+ else:
+  for a in audits:
+   t=dt(a.get('event_time'))
+   if not t or t>cut or (a.get('field_name') or '').casefold()!='email':continue
+   if email in {n(a.get('old_value')),n(a.get('new_value'))} and a.get('user_id') in cur:
+    uid=a['user_id'];found.setdefault(uid,{'current':cur[uid],'user_id':uid,'emails':set(),'phones':set(),'names':set(),'hashes':set()})
  if len(found)!=1:return None
  x=next(iter(found.values()));c=x['current'];uid=x['user_id'];updated=dt(c.get('updated_at'))
  if c.get('email') and (not updated or updated<=cut):x['emails'].add(n(c['email']))
@@ -137,6 +146,7 @@ def resolve(req,identities,audits,cut):
    if a.get('old_value'):target.add(n(a['old_value']))
    if a.get('new_value'):target.add(n(a['new_value']))
  x['hashes'].update(hashlib.sha256(e.encode()).hexdigest() for e in x['emails']);return x
+
 def matches(r,s):
  needles=set().union(s['emails'],s['phones'],s['names'],s['hashes'],{n(s['user_id'])});needles.discard('');return bool(flat(r.data)&needles)
 def has_direct_pii(obj):
