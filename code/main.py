@@ -253,7 +253,7 @@ def plan(op,sy,rid,co,data=None):
 def contains_identifier(text,token):
  if not token:return False
  if '@' in token:
-  return re.search(r'(?<![A-Za-z0-9._%+-])'+re.escape(token)+r'(?![A-Za-z0-9_%+-]|\\.[A-Za-z0-9_-])',text,re.I) is not None
+  return re.search(r'(?<![A-Za-z0-9._%+-])'+re.escape(token)+r'(?![A-Za-z0-9_%+-]|\.[A-Za-z0-9_-])',text,re.I) is not None
  if token.startswith(('user_','account_','search_','analytics_','support_','data_flow_','backup_','export_','audit_record_','tombstone_')):
   return re.search(r'(?<![A-Za-z0-9_-])'+re.escape(token)+r'(?![A-Za-z0-9_-])',text,re.I) is not None
  if re.fullmatch(r'[a-f0-9]{40,64}',token):return re.search(r'(?<![a-f0-9])'+re.escape(token)+r'(?![a-f0-9])',text,re.I) is not None
