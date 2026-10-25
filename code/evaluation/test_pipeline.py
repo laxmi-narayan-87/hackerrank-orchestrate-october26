@@ -38,4 +38,51 @@ class Validator(unittest.TestCase):
  def test_notapplicable_requires_empty(self):
   with tempfile.TemporaryDirectory() as d:
    d=Path(d);i=self.inp(d);o=d/'out.csv';self.out(o,'NOT_APPLICABLE',[{'step_no':1,'phase':'VERIFICATION','system_id':'account_service','resource_id':'account_1','operation':'VERIFY_RECORD_ABSENT','state':'ABSENT','evidence_id':'evidence_1'}]);r=ev.validate(o,i);self.assertFalse(r['valid']);self.assertTrue(any('NOT_APPLICABLE' in x for x in r['issues']))
+
+class PolicyRegression(unittest.TestCase):
+ def rec(self,system,collection,rid,data):
+  return main.Rec('evidence_test',main.dt('2026-09-01T00:00:00Z'),system,collection,rid,data)
+ def test_sql_snapshot_preserves_direct_identity_columns(self):
+  with tempfile.TemporaryDirectory() as td:
+   p=Path(td)/'snapshot.sql'
+   p.write_text("CREATE TABLE customer_profiles_primary (resource_id TEXT, user_id TEXT, email TEXT, phone TEXT, account_status TEXT, updated_at TEXT); INSERT INTO customer_profiles_primary VALUES ('account_1','user_1','x@example.com','+15550000000','ACTIVE','2026-09-01T00:00:00Z');",encoding='utf8')
+   records,error=main.sqlrecs(p,'evidence_test',main.dt('2026-09-02T00:00:00Z'))
+   self.assertIsNone(error);self.assertEqual(len(records),1)
+   self.assertEqual(records[0].data.get('email'),'x@example.com')
+   self.assertEqual(records[0].system,'account_service')
+   self.assertEqual(records[0].collection,'customer_profiles_primary')
+ def test_attributable_analytics_is_not_mistaken_for_anonymized(self):
+  r=self.rec('analytics_platform','customer_analytics_reports','analytics_1',{'user_id':'user_1','email':None,'phone':None,'email_hash':None})
+  self.assertEqual(main.classify(r),('REPORT_EXPOSED_PII','PRESENT'))
+ def test_support_attachment_requires_deletion(self):
+  r=self.rec('support_platform','support_attachments','support_attachment_1',{'file_name':'identity_document.pdf','email':'x@example.com'})
+  self.assertEqual(main.classify(r),('REPORT_REMAINING_RECORD','PRESENT'))
+  self.assertEqual(main.plan('REPORT_REMAINING_RECORD',r.system,r.rid,r.collection,r.data),('DELETE_RECORD','ABSENT','VERIFY_RECORD_ABSENT'))
+ def test_shared_support_context_without_direct_pii_is_redacted(self):
+  r=self.rec('support_platform','support_conversations','support_1',{'customer_reference':'user_1','requester_email':None,'message_excerpt':'shared order context'})
+  self.assertEqual(main.classify(r),('VERIFY_RECORD_REDACTED','REDACTED'))
+ def test_expired_security_retention_is_not_treated_as_required_retention(self):
+  r=self.rec('security_service','security_audit_events','audit_record_1',{'subject_reference':'user_1','retention_until':'2026-08-31T00:00:00Z'})
+  self.assertEqual(main.classify(r,main.dt('2026-09-01T00:00:00Z')),('REPORT_REMAINING_RECORD','PRESENT'))
+ def test_explicit_restore_check_is_evidence_but_generic_success_is_not(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'+15550000000','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  activities=[
+   {'activity_id':'activity_check_1','event_time':'2026-09-01T00:00:00Z','event_type':'CHECK_RESTORE_ACCESS','resource_id':'backup_1','reported_result':'SUCCESS','details':'Restore-access check confirmed archive backup_1 can still be restored for x@example.com.'},
+   {'activity_id':'activity_claim_1','event_time':'2026-09-01T00:01:00Z','event_type':'DELETE_RECORD','resource_id':'account_1','reported_result':'SUCCESS','details':'Deletion worker submitted account_1 for x@example.com.'}
+  ]
+  status,steps=main.audit_case(req,ids,[],main.Index(),activities)
+  self.assertEqual(status,'INCOMPLETE')
+  self.assertEqual([(s['operation'],s['evidence_id']) for s in steps if s['phase']=='FINDING'],[('REPORT_RESTORE_RISK','activity_check_1')])
+  self.assertFalse(any(s['evidence_id']=='activity_claim_1' for s in steps))
+ def test_validator_accepts_activity_ids_as_evidence(self):
+  with tempfile.TemporaryDirectory() as td:
+   d=Path(td);inp=self.inp(d);out=d/'out.csv';manifest=d/'evidence_files.csv'
+   manifest.write_text('file_id,file_path,origin,captured_at\n',encoding='utf8')
+   (d/'system_activity.csv').write_text('activity_id,event_time,event_type,source_system,target_system,resource_id,reported_result,details\nactivity_1,2026-09-01T00:00:00Z,CHECK_RESTORE_ACCESS,worker,backup_service,backup_1,SUCCESS,restore check\n',encoding='utf8')
+   (d/'user_audit_log.csv').write_text('audit_id,user_id,event_time,field_name,old_value,new_value\n',encoding='utf8')
+   steps=[{'step_no':1,'phase':'FINDING','system_id':'backup_service','resource_id':'backup_1','operation':'REPORT_RESTORE_RISK','state':'ACTIVE','evidence_id':'activity_1'},{'step_no':2,'phase':'REMEDIATION','system_id':'backup_service','resource_id':'backup_1','operation':'BLOCK_RESTORE','state':'BLOCKED','evidence_id':''},{'step_no':3,'phase':'VERIFICATION','system_id':'backup_service','resource_id':'backup_1','operation':'VERIFY_RESTORE_BLOCKED','state':'BLOCKED','evidence_id':''}]
+   self.out(out,'INCOMPLETE',steps);result=ev.validate(out,inp,manifest)
+   self.assertTrue(result['valid'],result['issues'])
+
 if __name__=='__main__':unittest.main(verbosity=2)
