@@ -80,7 +80,7 @@ def sqlrecs(path,eid,captured):
     for key,value in rawrow.items():
      if key not in {rid,dc,sc,cc,tc} and value is not None:payload.setdefault(key,value)
     payload.setdefault('resource_id',str(rawrow.get(rid)));payload.setdefault('table_name',table)
-    if cc and rawrow.get(cc):payload.setdefault('collection',rawrow[cc])
+    if cc and rawrow.get(cc):payload['collection']=rawrow[cc]
     else:payload.setdefault('collection',table)
     if sc and rawrow.get(sc):payload.setdefault('data_store',rawrow[sc])
     s,c=infer(str(path),payload);out.append(Rec(eid,captured,s,c,str(rawrow[rid]),payload,dt(str(rawrow.get(tc) or '')) if tc else None))
@@ -316,7 +316,7 @@ def audit_case(req,ids,audits,index,activities=None):
      rid=m.group(0)
     if len(group_ids)>1 and subject_hit and rid not in known and not any(contains_identifier(line.casefold(),token) for token in identifiers):continue
     sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
-    if rid.startswith('audit_record_') and any(q in combined for q in ('rows=1','result=hit','result=found','security_audit_log | found','security_audit_log|found','security_audit_log found','security_audit_log | found |','security_audit_log | found','security_audit_log|found','security_audit_log found','| found | user_')):op,st='VERIFY_RECORD_PRESENT','PRESENT'
+    if rid.startswith('audit_record_') and (any(q in combined for q in ('rows=1','result=hit','result=found')) or ('security_audit_log' in combined and re.search(r'\\bfound\\b',combined))):op,st='VERIFY_RECORD_PRESENT','PRESENT'
     elif any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')) or ('user_profile' in combined and 'not_found' in combined):op,st='VERIFY_RECORD_ABSENT','ABSENT'
     elif rid.startswith('analytics_') and ('contact_lookup' in combined or 'email_opt_in=' in combined):op,st='REPORT_REMAINING_RECORD','PRESENT'
     elif rid.startswith('analytics_') and ('anonymized' in combined or all(q in combined for q in ('email=null','phone=null','email_hash=null'))):op,st='VERIFY_RECORD_ANONYMIZED','ANONYMIZED'
@@ -368,7 +368,7 @@ def audit_case(req,ids,audits,index,activities=None):
    candidates=[]
    for a in activities or []:
     at=dt(a.get('event_time'))
-    if not at or at>cut or at<requested or str(a.get('event_type') or '').upper()!=event_type:continue
+    if not at or at>cut or (requested and at<requested) or str(a.get('event_type') or '').upper()!=event_type:continue
     if str(a.get('target_system') or '').casefold()!=target:continue
     rid=str(a.get('resource_id') or '')
     if (target=='account_service' and not rid.startswith('account_')) or (target=='analytics_platform' and not rid.startswith('analytics_')):continue
@@ -376,8 +376,13 @@ def audit_case(req,ids,audits,index,activities=None):
     if distance<=600:candidates.append((distance,a))
    if not candidates:continue
    if target=='analytics_platform' and not re.search(r'\b(analytics|telemetry|anonymi[sz]e|anonymous statistics)\b',str(req.get('request_text') or ''),re.I):continue
-   if len(candidates)!=1:continue
-   a=candidates[0][1];rid=str(a.get('resource_id') or '')
+   # Candidate resources must be explicitly linked to the request subject; time alone is not identity evidence.
+   subject_linked=[]
+   for distance,a in candidates:
+    identity_text=' '.join(str(a.get(k) or '') for k in ('details','user_id','subject_id','customer_id','email','email_hash','phone'))
+    if any(contains_identifier(identity_text,token) for token in identifiers):subject_linked.append((distance,a))
+   if len(subject_linked)!=1:continue
+   a=subject_linked[0][1];rid=str(a.get('resource_id') or '')
    linked=[r for r in records if r.system==target and r.rid==rid]
    if linked:
     newest=max(linked,key=lambda r:evidence_time(r) or datetime.min.replace(tzinfo=timezone.utc))
