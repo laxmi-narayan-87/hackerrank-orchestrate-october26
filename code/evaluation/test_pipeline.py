@@ -124,4 +124,36 @@ class PolicyRegression(unittest.TestCase):
   self.assertEqual(recs[0].system,'account_service')
   self.assertEqual(main.classify(recs[0]),('VERIFY_RECORD_ABSENT','ABSENT'))
 
+
+ def test_sql_snapshot_allows_safe_foreign_keys_pragma(self):
+  with tempfile.TemporaryDirectory() as td:
+   p=Path(td)/'snapshot.sql'
+   p.write_text("PRAGMA foreign_keys=ON; BEGIN TRANSACTION; CREATE TABLE customer_profiles_primary (resource_id TEXT, user_id TEXT, email TEXT, account_status TEXT, updated_at TEXT); INSERT INTO customer_profiles_primary VALUES ('account_5','user_5','y@example.com','ACTIVE','2026-09-01T00:00:00Z'); COMMIT;",encoding='utf8')
+   records,error=main.sqlrecs(p,'e1',main.dt('2026-09-02T00:00:00Z'))
+   self.assertIsNone(error);self.assertEqual(len(records),1);self.assertEqual(records[0].data.get('email'),'y@example.com')
+ def test_handover_text_statuses_are_classified_by_category(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  body='2026-09-01T00:00:00Z | account_service | account_1 | USER_PROFILE | NOT_FOUND | x@example.com\\n2026-09-01T00:00:00Z | security_service | audit_record_1 | SECURITY_AUDIT_LOG | FOUND | user_1'
+  ix=main.Index();ix.text=[('evidence_handover',main.dt('2026-09-01T00:00:00Z'),'handover.txt',body)]
+  status,steps=main.audit_case(req,ids,[],ix,[])
+  self.assertEqual(status,'COMPLETE')
+  self.assertEqual({x['operation'] for x in steps},{'VERIFY_RECORD_ABSENT','VERIFY_RECORD_PRESENT'})
+ def test_unique_report_time_delete_links_resource_to_snapshot_absence(self):
+  req={'email':'x@example.com','requested_at':'2026-09-01T08:00:00Z','reported_at':'2026-09-02T10:00:00Z','request_text':'Please delete my account','audit_at':'2026-09-03T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  ix=main.Index();ix.records=[main.Rec('snapshot_evidence',main.dt('2026-09-02T09:00:00Z'),'account_service','customer_profiles_primary','account_5',{'resource_id':'account_5','user_id':'user_5','email':'y@example.com','account_status':'ACTIVE'})]
+  activities=[{'activity_id':'activity_delete','event_time':'2026-09-02T09:59:00Z','event_type':'DELETE_RECORD','source_system':'deletion_worker','target_system':'account_service','resource_id':'account_1','reported_result':'SUCCESS','details':'Deletion worker submitted account_1.'}]
+  status,steps=main.audit_case(req,ids,[],ix,activities)
+  self.assertEqual(status,'COMPLETE')
+  self.assertEqual([(x['resource_id'],x['operation'],x['evidence_id']) for x in steps],[('account_1','VERIFY_RECORD_ABSENT','snapshot_evidence')])
+ def test_near_report_anonymize_links_only_the_anonymized_record_state(self):
+  req={'email':'x@example.com','requested_at':'2026-09-01T08:00:00Z','reported_at':'2026-09-02T10:00:00Z','request_text':'I am deleting my account; anonymous analytics may remain.','audit_at':'2026-09-03T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  ix=main.Index();ix.records=[main.Rec('analytics_snapshot',main.dt('2026-09-02T09:00:00Z'),'analytics_platform','customer_analytics_reports','analytics_1',{'resource_id':'analytics_1','user_id':None,'email':None,'phone':None,'email_hash':None})]
+  activities=[{'activity_id':'activity_anonymize','event_time':'2026-09-02T09:55:00Z','event_type':'ANONYMIZE_RECORD','source_system':'deletion_worker','target_system':'analytics_platform','resource_id':'analytics_1','reported_result':'SUCCESS','details':'Anonymization operation reported complete.'}]
+  status,steps=main.audit_case(req,ids,[],ix,activities)
+  self.assertEqual(status,'COMPLETE')
+  self.assertEqual([(x['operation'],x['evidence_id']) for x in steps],[('VERIFY_RECORD_ANONYMIZED','analytics_snapshot')])
+
 if __name__=='__main__':unittest.main(verbosity=2)
