@@ -143,7 +143,7 @@ class PolicyRegression(unittest.TestCase):
   req={'email':'x@example.com','requested_at':'2026-09-01T08:00:00Z','reported_at':'2026-09-02T10:00:00Z','request_text':'Please delete my account','audit_at':'2026-09-03T00:00:00Z'}
   ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
   ix=main.Index();ix.records=[main.Rec('snapshot_evidence',main.dt('2026-09-02T09:00:00Z'),'account_service','customer_profiles_primary','account_5',{'resource_id':'account_5','user_id':'user_5','email':'y@example.com','account_status':'ACTIVE'})]
-  activities=[{'activity_id':'activity_delete','event_time':'2026-09-02T09:59:00Z','event_type':'DELETE_RECORD','source_system':'deletion_worker','target_system':'account_service','resource_id':'account_1','reported_result':'SUCCESS','details':'Deletion worker submitted account_1.'}]
+  activities=[{'activity_id':'activity_delete','event_time':'2026-09-02T09:59:00Z','event_type':'DELETE_RECORD','source_system':'deletion_worker','target_system':'account_service','resource_id':'account_1','reported_result':'SUCCESS','details':'Deletion worker submitted account_1 for user_1 / x@example.com.'}]
   status,steps=main.audit_case(req,ids,[],ix,activities)
   self.assertEqual(status,'COMPLETE')
   self.assertEqual([(x['resource_id'],x['operation'],x['evidence_id']) for x in steps],[('account_1','VERIFY_RECORD_ABSENT','snapshot_evidence')])
@@ -151,9 +151,14 @@ class PolicyRegression(unittest.TestCase):
   req={'email':'x@example.com','requested_at':'2026-09-01T08:00:00Z','reported_at':'2026-09-02T10:00:00Z','request_text':'I am deleting my account; anonymous analytics may remain.','audit_at':'2026-09-03T00:00:00Z'}
   ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
   ix=main.Index();ix.records=[main.Rec('analytics_snapshot',main.dt('2026-09-02T09:00:00Z'),'analytics_platform','customer_analytics_reports','analytics_1',{'resource_id':'analytics_1','user_id':None,'email':None,'phone':None,'email_hash':None})]
-  activities=[{'activity_id':'activity_anonymize','event_time':'2026-09-02T09:55:00Z','event_type':'ANONYMIZE_RECORD','source_system':'deletion_worker','target_system':'analytics_platform','resource_id':'analytics_1','reported_result':'SUCCESS','details':'Anonymization operation reported complete.'}]
+  activities=[{'activity_id':'activity_anonymize','event_time':'2026-09-02T09:55:00Z','event_type':'ANONYMIZE_RECORD','source_system':'deletion_worker','target_system':'analytics_platform','resource_id':'analytics_1','reported_result':'SUCCESS','details':'Anonymization operation reported complete for user_1 / x@example.com.'}]
   status,steps=main.audit_case(req,ids,[],ix,activities)
   self.assertEqual(status,'COMPLETE')
   self.assertEqual([(x['operation'],x['evidence_id']) for x in steps],[('VERIFY_RECORD_ANONYMIZED','analytics_snapshot')])
 
 if __name__=='__main__':unittest.main(verbosity=2)
+  def test_negated_japanese_deletion_request_is_not_applicable(self):
+   req={'email':'x@example.com','request_text':'削除しないでください','audit_at':'2026-09-02T00:00:00Z'}
+   status,steps=main.audit_case(req,[],[],main.Index(),[])
+   self.assertEqual(status,'NOT_APPLICABLE')
+   self.assertEqual(steps,[])

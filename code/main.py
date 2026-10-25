@@ -142,8 +142,8 @@ def authorized(text):
  t=(text or '').casefold()
  # If a request explicitly asks for deletion, accompanying references to an old
  # export/download link or marketing do not turn it into a non-deletion request.
-  # Explicit negation takes precedence over the Japanese deletion token.
-  if re.search(r'(?:削除しないで|消去しないで|削除を(?:希望しません|望みません)|削除は不要|削除しなくてよい)',t):return False
+ # Explicit negation takes precedence over the Japanese deletion token.
+ if re.search(r'(?:削除しないで|消去しないで|削除を(?:希望しません|望みません)|削除は不要|削除しなくてよい)',t):return False
  if any(term in t for term in ('削除','消去','アカウントを閉鎖','アカウントの削除')):return True
  if any(re.search(p,t,re.I) for p in DEL):return True
  # Requests to verify an already-completed deletion still authorize a deletion audit.
@@ -386,9 +386,6 @@ def audit_case(req,ids,audits,index,activities=None):
     if any(contains_identifier(identity_text,token) for token in identifiers):subject_linked.append((distance,a))
    if len(subject_linked)==1:a=subject_linked[0][1]
    elif len(subject_linked)>1:continue
-   elif len(candidates)==1 and event_type in {'ANONYMIZE_RECORD','DELETE_RECORD'}:
-    # A single explicit delete/anonymize event may link the resource; SUCCESS is not state proof.
-    a=candidates[0][1]
    else:continue
    rid=str(a.get('resource_id') or '')
    linked=[r for r in records if r.system==target and r.rid==rid]
