@@ -18,7 +18,14 @@ def validate(out,input_path,manifest=None):
  if len(ids)!=len(set(ids)):issues.append('duplicate case_id')
  if sorted(ids)!=sorted(expected):issues.append('output case_id set differs from input')
  if ids!=sorted(ids):issues.append('rows are not sorted')
- validids={x.get('file_id','') for x in read(manifest)} if manifest and Path(manifest).exists() else None;counts=Counter();nt=0
+ validids=None
+ if manifest and Path(manifest).exists():
+  validids={x.get('file_id','') for x in read(manifest)}
+  base=Path(manifest).parent
+  for filename,key in (('system_activity.csv','activity_id'),('user_audit_log.csv','audit_id')):
+   evidence_path=base/filename
+   if evidence_path.exists():validids.update(x.get(key,'') for x in read(evidence_path))
+ counts=Counter();nt=0
  for row in rows:
   cid=row.get('case_id','');status=row.get('deletion_status','');counts[status]+=1
   if status not in STATUSES:issues.append(f'{cid}: invalid status {status!r}')
@@ -50,8 +57,13 @@ def compare(out,sample):
   a,b=p[cid],g[cid];sa+=a['deletion_status']==b['deletion_status']
   try:ps,gs=json.loads(a['steps_json']),json.loads(b['steps_json'])
   except Exception:ps,gs=[],[{'bad':1}]
-  ea+=ps==gs;qa+=sig(ps)==sig(gs)
-  if a['deletion_status']!=b['deletion_status'] or ps!=gs:errors.append({'case_id':cid,'status_match':a['deletion_status']==b['deletion_status'],'predicted_status':a['deletion_status'],'expected_status':b['deletion_status'],'predicted_steps':len(ps),'expected_steps':len(gs)})
+  psig,gsig=sig(ps),sig(gs);ea+=ps==gs;qa+=psig==gsig
+  if a['deletion_status']!=b['deletion_status'] or ps!=gs:
+   pset,gset=set(psig),set(gsig)
+   pmap={tuple(sig([s])[0]):s.get('evidence_id','') for s in ps if isinstance(s,dict)}
+   gmap={tuple(sig([s])[0]):s.get('evidence_id','') for s in gs if isinstance(s,dict)}
+   evidence_mismatches=[{'step_key':list(k),'predicted_evidence_id':pmap[k],'expected_evidence_id':gmap[k]} for k in pmap.keys()&gmap.keys() if pmap[k]!=gmap[k]]
+   errors.append({'case_id':cid,'status_match':a['deletion_status']==b['deletion_status'],'predicted_status':a['deletion_status'],'expected_status':b['deletion_status'],'predicted_steps':len(ps),'expected_steps':len(gs),'missing_steps':[s for s in gs if tuple(sig([s])[0]) not in pset][:12],'extra_steps':[s for s in ps if tuple(sig([s])[0]) not in gset][:12],'evidence_mismatches':evidence_mismatches[:12],'order_mismatch':psig!=gsig and pset==gset})
  return {'public_sample_cases_compared':len(ids),'status_accuracy':sa/len(ids) if ids else None,'exact_step_array_accuracy':ea/len(ids) if ids else None,'sequence_accuracy':qa/len(ids) if ids else None,'mismatches':errors,'note':'Public sample calibration only; not hidden-benchmark accuracy.'}
 def main():
  root=Path(__file__).resolve().parents[2];p=argparse.ArgumentParser();p.add_argument('--input',type=Path,default=root/'dataset'/'deletion_requests.csv');p.add_argument('--output',type=Path,default=root/'output.csv');p.add_argument('--dataset',type=Path,default=root/'dataset');p.add_argument('--compare-sample',action='store_true');a=p.parse_args();r=validate(a.output,a.input,a.dataset/'evidence_files.csv')
