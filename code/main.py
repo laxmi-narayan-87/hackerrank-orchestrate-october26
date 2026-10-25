@@ -123,15 +123,15 @@ def make_index(dataset):
       result=subprocess.run([tool,'-layout',str(p),'-'],capture_output=True,text=True,timeout=20,check=False)
       if result.returncode==0:body=result.stdout
     if body.strip():idx.text.append((eid,t,rel,body))
-    else:idx.warnings.append(f'\${eid}: PDF text extraction unavailable or empty')
+    else:idx.warnings.append(f'{eid}: PDF text extraction unavailable or empty')
    elif ext in {'.png','.jpg','.jpeg','.webp'}:
     try:
      from PIL import Image
      import pytesseract
      body=pytesseract.image_to_string(Image.open(p),config='--psm 6')
      if body.strip():idx.text.append((eid,t,rel,body))
-     else:idx.warnings.append(f'\${eid}: OCR returned no text')
-    except (ImportError, OSError, RuntimeError) as e:idx.warnings.append(f'\${eid}: OCR unavailable: {type(e).__name__}')
+     else:idx.warnings.append(f'{eid}: OCR returned no text')
+    except (ImportError, OSError, RuntimeError) as e:idx.warnings.append(f'{eid}: OCR unavailable: {type(e).__name__}')
   except (OSError,json.JSONDecodeError,UnicodeError) as e:idx.warnings.append(f'{eid}: {type(e).__name__}: {e}')
  return idx
 NONDEL=[r'\b(access|export|download|copy of my data|correct|rectify|update my (?:name|email|address)|change my email|opt[ -]?out|unsubscribe|stop (?:the )?marketing|marketing preferences|recover my account)\b',r'\b(acceso a mis datos|descargar mis datos|exportar mis datos|corregir mis datos|actualizar mis datos|cancelar la suscripci[oó]n|dejar de recibir publicidad)\b',r'\b(acc[eè]s [àa] mes donn[eé]es|exporter mes donn[eé]es|corriger mes donn[eé]es|modifier mon adresse e-mail)\b']
@@ -253,7 +253,7 @@ def plan(op,sy,rid,co,data=None):
 def contains_identifier(text,token):
  if not token:return False
  if '@' in token:
-  return re.search(r'(?<![A-Za-z0-9._%+-])'+re.escape(token)+r'(?![A-Za-z0-9._%+-])',text,re.I) is not None
+  return re.search(r'(?<![A-Za-z0-9._%+-])'+re.escape(token)+r'(?![A-Za-z0-9_%+-]|\\.[A-Za-z0-9_-])',text,re.I) is not None
  if token.startswith(('user_','account_','search_','analytics_','support_','data_flow_','backup_','export_','audit_record_','tombstone_')):
   return re.search(r'(?<![A-Za-z0-9_-])'+re.escape(token)+r'(?![A-Za-z0-9_-])',text,re.I) is not None
  if re.fullmatch(r'[a-f0-9]{40,64}',token):return re.search(r'(?<![a-f0-9])'+re.escape(token)+r'(?![a-f0-9])',text,re.I) is not None
