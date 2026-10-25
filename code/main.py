@@ -355,8 +355,6 @@ def audit_case(req,ids,audits,index,activities=None):
    # Negative evidence such as "not disabled" or "still not inactive" must never
    # be treated as proof that the flow is disabled. Classify explicit active wording
    # first, then accept only unambiguous inactive wording.
-   active_phrases=('not disabled','not inactive','isnt disabled',"isn't disabled",'still enabled','remains enabled','still active','remains active','remains not disabled','not stopped','not shut down')
-   inactive_phrases=('confirmed disabled','is disabled','disabled successfully','not enabled','inactive','stopped','shut down','turned off','no longer enabled')
    if any(x in details for x in ('remains enabled','still enabled','remains active','still active','confirmed enabled','not disabled','not inactive','not stopped','not shut down','is not disabled','is not inactive')):
     op,st,sy='REPORT_ACTIVE_DATA_FLOW','ACTIVE','integration_service'
    elif any(x in details for x in ('confirmed disabled','is disabled','disabled successfully','not enabled','inactive','stopped','shut down','turned off','no longer enabled')):
