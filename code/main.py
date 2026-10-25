@@ -352,8 +352,15 @@ def audit_case(req,ids,audits,index,activities=None):
   rid=str(a.get('resource_id') or '');typ=str(a.get('event_type') or '').upper();details=str(a.get('details') or '').casefold()
   if not rid or not (rid in {key[1] for key in matched} or any(contains_identifier(details,token) for token in identifiers)):continue
   if typ=='CHECK_DATA_FLOW':
-   if any(x in details for x in ('remains enabled','still enabled','remains active','still active','confirmed enabled')):op,st,sy='REPORT_ACTIVE_DATA_FLOW','ACTIVE','integration_service'
-   elif any(x in details for x in ('disabled','not enabled','inactive','stopped')):op,st,sy='VERIFY_DATA_FLOW_DISABLED','DISABLED','integration_service'
+   # Negative evidence such as "not disabled" or "still not inactive" must never
+   # be treated as proof that the flow is disabled. Classify explicit active wording
+   # first, then accept only unambiguous inactive wording.
+   active_phrases=('not disabled','not inactive','isnt disabled',"isn't disabled",'still enabled','remains enabled','still active','remains active','remains not disabled','not stopped','not shut down')
+   inactive_phrases=('confirmed disabled','is disabled','disabled successfully','not enabled','inactive','stopped','shut down','turned off','no longer enabled')
+   if any(x in details for x in ('remains enabled','still enabled','remains active','still active','confirmed enabled','not disabled','not inactive','not stopped','not shut down','is not disabled','is not inactive')):
+    op,st,sy='REPORT_ACTIVE_DATA_FLOW','ACTIVE','integration_service'
+   elif any(x in details for x in ('confirmed disabled','is disabled','disabled successfully','not enabled','inactive','stopped','shut down','turned off','no longer enabled')):
+    op,st,sy='VERIFY_DATA_FLOW_DISABLED','DISABLED','integration_service'
    else:continue
   elif typ=='CHECK_RESTORE_ACCESS':
    if any(x in details for x in ('can still be restored','can be restored','restore allowed','remains restorable')):op,st,sy='REPORT_RESTORE_RISK','ACTIVE','backup_service'
