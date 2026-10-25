@@ -113,13 +113,25 @@ def make_index(dataset):
       try:idx.records.extend(jsonrecs(json.loads(q),eid,t,rel))
       except json.JSONDecodeError:pass
    elif ext=='.pdf':
-    tool=shutil.which('pdftotext')
-    if tool:
-     result=subprocess.run([tool,'-layout',str(p),'-'],capture_output=True,text=True,timeout=20,check=False)
-     if result.returncode==0 and result.stdout:idx.text.append((eid,t,rel,result.stdout))
-     else:idx.warnings.append(f'{eid}: PDF text extraction failed')
-    else:idx.warnings.append(f'{eid}: PDF text extraction unavailable')
-   elif ext in {'.png','.jpg','.jpeg','.webp'}:idx.warnings.append(f'{eid}: OCR not implemented ({ext})')
+    body=''
+    try:
+     from pypdf import PdfReader
+     body='\n'.join(page.extract_text() or '' for page in PdfReader(str(p)).pages)
+    except ImportError:
+     tool=shutil.which('pdftotext')
+     if tool:
+      result=subprocess.run([tool,'-layout',str(p),'-'],capture_output=True,text=True,timeout=20,check=False)
+      if result.returncode==0:body=result.stdout
+    if body.strip():idx.text.append((eid,t,rel,body))
+    else:idx.warnings.append(f'\${eid}: PDF text extraction unavailable or empty')
+   elif ext in {'.png','.jpg','.jpeg','.webp'}:
+    try:
+     from PIL import Image
+     import pytesseract
+     body=pytesseract.image_to_string(Image.open(p),config='--psm 6')
+     if body.strip():idx.text.append((eid,t,rel,body))
+     else:idx.warnings.append(f'\${eid}: OCR returned no text')
+    except (ImportError, OSError, RuntimeError) as e:idx.warnings.append(f'\${eid}: OCR unavailable: {type(e).__name__}')
   except (OSError,json.JSONDecodeError,UnicodeError) as e:idx.warnings.append(f'{eid}: {type(e).__name__}: {e}')
  return idx
 NONDEL=[r'\b(access|export|download|copy of my data|correct|rectify|update my (?:name|email|address)|change my email|opt[ -]?out|unsubscribe|stop (?:the )?marketing|marketing preferences|recover my account)\b',r'\b(acceso a mis datos|descargar mis datos|exportar mis datos|corregir mis datos|actualizar mis datos|cancelar la suscripci[oó]n|dejar de recibir publicidad)\b',r'\b(acc[eè]s [àa] mes donn[eé]es|exporter mes donn[eé]es|corriger mes donn[eé]es|modifier mon adresse e-mail)\b']
