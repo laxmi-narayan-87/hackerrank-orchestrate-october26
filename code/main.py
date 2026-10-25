@@ -303,9 +303,12 @@ def audit_case(req,ids,audits,index,activities=None):
    # A trace without subject identifiers may update only one previously linked resource.
    if not subject_hit and not (len(group_ids)==1 and len(known_in_group)==1):continue
    for line,line_time in group:
-    m=re.search(r"resource[_ ]id\s*[:=]\s*[\"']?([a-z0-9_-]+)",line,re.I) or re.search(resource_pattern,line,re.I)
-    if not m:continue
-    rid=m.group(1)
+    m=re.search(r"resource[_ ]id\s*[:=]\s*[\"']?([a-z0-9_-]+)",line,re.I)
+    if m:rid=m.group(1)
+    else:
+     m=re.search(resource_pattern,line,re.I)
+     if not m:continue
+     rid=m.group(0)
     if len(group_ids)>1 and subject_hit and rid not in known and not any(contains_identifier(line.casefold(),token) for token in identifiers):continue
     sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
     if any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')) or ('user_profile' in combined and 'not_found' in combined):op,st='VERIFY_RECORD_ABSENT','ABSENT'
