@@ -25,6 +25,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install PDF and OCR dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
+          python -m pip install -r code/requirements.txt
+
       - name: Run regression tests
         run: python -m unittest discover -s code/evaluation -p 'test_*.py' -v
 
@@ -43,6 +49,7 @@ jobs:
           python code/main.py --dataset dataset --input dataset/sample_deletion_requests.csv --output /tmp/sample_prediction.csv
           python code/evaluation/normalize_proposals.py /tmp/sample_prediction.csv
           python code/evaluation/main.py --input dataset/sample_deletion_requests.csv --output /tmp/sample_prediction.csv --dataset dataset --compare-sample
+          cp /tmp/sample_prediction.csv sample_prediction.csv
 
       - name: Build submission code archive
         run: |
@@ -56,6 +63,7 @@ jobs:
           path: |
             output.csv
             code.zip
+            sample_prediction.csv
           if-no-files-found: error
           retention-days: 14
 
