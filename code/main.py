@@ -384,9 +384,9 @@ def audit_case(req,ids,audits,index,activities=None):
     if any(contains_identifier(identity_text,token) for token in identifiers):subject_linked.append((distance,a))
    if len(subject_linked)==1:a=subject_linked[0][1]
    elif len(subject_linked)>1:continue
-   elif len(candidates)==1 and event_type=='ANONYMIZE_RECORD':
-    # The regression fixture only identifies the resource through the explicit anonymization event;
-    # accept this event as a candidate only when its latest snapshot is demonstrably anonymous.
+    elif len(candidates)==1 and event_type in {'ANONYMIZE_RECORD','DELETE_RECORD'}:
+     # A single explicit delete/anonymize event may link the resource; its SUCCESS claim
+     # is not proof of state; state must still come from the captured snapshot.
     a=candidates[0][1]
    else:continue
    rid=str(a.get('resource_id') or '')
