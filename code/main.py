@@ -61,7 +61,8 @@ def jsonrecs(obj,eid,captured,path):
  walk(obj);return out
 def sqlrecs(path,eid,captured):
  sql=path.read_text(encoding='utf-8',errors='replace')
- if re.search(r'\b(ATTACH|DETACH|PRAGMA|VACUUM|LOAD_EXTENSION|CREATE\s+TRIGGER)\b',sql,re.I):return [],'blocked SQL feature'
+ if re.search(r'\b(ATTACH|DETACH|VACUUM|LOAD_EXTENSION|CREATE\s+TRIGGER)\b',sql,re.I) or re.search(r'\bPRAGMA\b(?!\s+foreign_keys\s*=\s*(?:ON|OFF)\b)',sql,re.I):return [],'blocked SQL feature'
+ sql=re.sub(r'\bPRAGMA\s+foreign_keys\s*=\s*(?:ON|OFF)\s*;?', '', sql, flags=re.I)
  if not re.search(r'\bCREATE\s+TABLE\b',sql,re.I) or not re.search(r'\bINSERT\s+INTO\b',sql,re.I):return [],'unsupported SQL snapshot'
  db=sqlite3.connect(':memory:');out=[]
  try:
@@ -276,6 +277,7 @@ def audit_case(req,ids,audits,index,activities=None):
   if matches(r,subject):
    op,st=classify(r,cut);add_match(matched,r,op,st)
  identifiers={x for x in (subject['emails']|subject['phones']|subject['hashes']|{n(subject['user_id'])}) if x}
+ resource_pattern=r'\b(?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_[a-z0-9_-]+\b'
  for eid,t,path,body in texts:
   parsed=[]
   for line in body.splitlines():
@@ -283,9 +285,7 @@ def audit_case(req,ids,audits,index,activities=None):
    line_time=dt(stamp.group(1)) if stamp else None
    if line_time and line_time>cut:continue
    parsed.append((line,line_time))
-  # OCR may place a subject and its resource on separate lines. Join only a
-  # single-resource document; otherwise keep trace IDs as the correlation boundary.
-  doc_ids=set(re.findall(r'\b(?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_[a-z0-9_-]+\b',body,re.I))
+  doc_ids=set(re.findall(resource_pattern,body,re.I))
   if path.casefold().endswith(('.pdf','.png','.jpg','.jpeg','.webp')) and len(doc_ids)==1 and any(contains_identifier(body.casefold(),token) for token in identifiers):
    groups={'document':parsed}
   else:
@@ -296,25 +296,45 @@ def audit_case(req,ids,audits,index,activities=None):
     groups.setdefault(group,[]).append((line,line_time))
   for group in groups.values():
    combined=' '.join(line for line,_ in group).casefold()
+   group_ids=set(re.findall(resource_pattern,combined,re.I))
    known={key[1] for key in matched}
-   if not any(contains_identifier(combined,token) for token in identifiers) and not any(contains_identifier(combined,rid) for rid in known):continue
+   subject_hit=any(contains_identifier(combined,token) for token in identifiers)
+   known_in_group=group_ids & known
+   # A trace without subject identifiers may update only one previously linked resource.
+   if not subject_hit and not (len(group_ids)==1 and len(known_in_group)==1):continue
    for line,line_time in group:
-    m=re.search(r"resource[_ ]id\s*[:=]\s*[\"']?([a-z0-9_-]+)",line,re.I) or re.search(r"\b((?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_[a-z0-9_-]+)\b",line,re.I)
+    m=re.search(r"resource[_ ]id\s*[:=]\s*[\"']?([a-z0-9_-]+)",line,re.I) or re.search(resource_pattern,line,re.I)
     if not m:continue
-    rid=m.group(1);sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
-    if any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')):op,st='VERIFY_RECORD_ABSENT','ABSENT'
-    elif 'enabled=false' in combined or 'restore_allowed=false' in combined or 'restore blocked' in combined or 'cannot be restored' in combined:op,st=('VERIFY_DATA_FLOW_DISABLED','DISABLED') if rid.startswith('data_flow_') or 'enabled=false' in combined else ('VERIFY_RESTORE_BLOCKED','BLOCKED')
-    elif 'attachment_pii_scan' in combined:op,st='REPORT_REMAINING_RECORD','PRESENT'
+    rid=m.group(1)
+    if len(group_ids)>1 and subject_hit and rid not in known and not any(contains_identifier(line.casefold(),token) for token in identifiers):continue
+    sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
+    if any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')) or ('user_profile' in combined and 'not_found' in combined):op,st='VERIFY_RECORD_ABSENT','ABSENT'
+    elif rid.startswith('audit_record_') and any(q in combined for q in ('rows=1','result=hit','result=found','security_audit_log | found')):op,st='VERIFY_RECORD_PRESENT','PRESENT'
+    elif rid.startswith('analytics_') and ('anonymized' in combined or all(q in combined for q in ('email=null','phone=null','email_hash=null'))):op,st='VERIFY_RECORD_ANONYMIZED','ANONYMIZED'
+    elif rid.startswith('analytics_') and ('identifiable' in combined or 'analytics_identity_scan' in combined or any(q in combined for q in ('email=','phone=','email_hash='))):op,st='REPORT_EXPOSED_PII','PRESENT'
+    elif rid.startswith('support_') and ('support_attachment' in combined and ('found' in combined or 'present' in combined) or 'attachment_pii_scan' in combined):op,st='REPORT_REMAINING_RECORD','PRESENT'
+    elif rid.startswith('support_') and ('support_message' in combined and 'redacted' in combined or all(q in combined for q in ('requester_email=null','requester_phone=null'))):op,st='VERIFY_RECORD_REDACTED','REDACTED'
+    elif rid.startswith('support_') and ('identifiable' in combined or 'message_pii_scan' in combined or 'requester_email=' in combined and 'requester_email=null' not in combined):op,st='REPORT_EXPOSED_PII','PRESENT'
+    elif rid.startswith('backup_') and ('blocked' in combined or 'restore_allowed=false' in combined or 'restore access is blocked' in combined):op,st='VERIFY_RESTORE_BLOCKED','BLOCKED'
+    elif rid.startswith('backup_') and ('active' in combined or 'restore_allowed=true' in combined or 'can still be restored' in combined or 'restore access remains allowed' in combined):op,st='REPORT_RESTORE_RISK','ACTIVE'
+    elif rid.startswith('data_flow_') and ('disabled' in combined or 'enabled=false' in combined or 'data_flow | disabled' in combined):op,st='VERIFY_DATA_FLOW_DISABLED','DISABLED'
+    elif rid.startswith('data_flow_') and ('active' in combined or 'enabled=true' in combined or 'remains enabled' in combined or 'still enabled' in combined):op,st='REPORT_ACTIVE_DATA_FLOW','ACTIVE'
+    elif 'search_index_entry' in combined and 'found' in combined:op,st='REPORT_REMAINING_RECORD','PRESENT'
+    elif 'user_export' in combined and 'found' in combined:op,st='REPORT_REMAINING_RECORD','PRESENT'
+    elif 'support_attachment' in combined and 'found' in combined:op,st='REPORT_REMAINING_RECORD','PRESENT'
+    elif any(q in combined for q in ('enabled=false','restore_allowed=false','restore blocked','cannot be restored')):op,st=('VERIFY_DATA_FLOW_DISABLED','DISABLED') if rid.startswith('data_flow_') or 'enabled=false' in combined else ('VERIFY_RESTORE_BLOCKED','BLOCKED')
+    elif any(q in combined for q in ('attachment_pii_scan',)):op,st='REPORT_REMAINING_RECORD','PRESENT'
     elif any(q in combined for q in ('message_pii_scan','analytics_identity_scan')):op,st='REPORT_EXPOSED_PII','PRESENT'
     elif any(q in combined for q in ('remains enabled','remains active','still enabled','still active','restore_candidate_evaluated eligible=true','can still be restored','restore access remains allowed')):op,st=('REPORT_ACTIVE_DATA_FLOW','ACTIVE') if rid.startswith('data_flow_') else ('REPORT_RESTORE_RISK','ACTIVE') if rid.startswith('backup_') else ('REPORT_REMAINING_RECORD','PRESENT')
     elif any(q in combined for q in ('result=hit','rows=1','http_status=200','total_hits=1','result=found')):
      op,st=('REPORT_REMAINING_RECORD','PRESENT') if rid.startswith(('account_','search_','export_','marketing_','cache_')) else ('REPORT_EXPOSED_PII','PRESENT')
+     if rid.startswith('audit_record_'):op,st='VERIFY_RECORD_PRESENT','PRESENT'
+     if rid.startswith('analytics_') and all(q in combined for q in ('email=null','phone=null','email_hash=null')):op,st='VERIFY_RECORD_ANONYMIZED','ANONYMIZED'
      if rid.startswith('data_flow_'):op,st='REPORT_ACTIVE_DATA_FLOW','ACTIVE'
      if rid.startswith('backup_'):op,st='REPORT_RESTORE_RISK','ACTIVE'
-    elif any(q in combined for q in ('customer_reference=null','email=null','phone=null','email_hash=null')) and rid.startswith('analytics_'):op,st='VERIFY_RECORD_ANONYMIZED','ANONYMIZED'
     else:continue
     rr=Rec(eid,t,sy,'readback',rid,{'resource_id':rid,'event':combined},line_time or t);add_match(matched,rr,op,st)
- # Explicit checks are evidence. Generic operation results remain claims.
+ # Explicit state-check activity is proof; generic operation results are not.
  for a in activities or []:
   at=dt(a.get('event_time'))
   if not at or at>cut:continue
@@ -330,7 +350,41 @@ def audit_case(req,ids,audits,index,activities=None):
    else:continue
   else:continue
   rr=Rec(str(a.get('activity_id') or ''),at,sy,'activity_check',rid,{'resource_id':rid,'details':details},at);add_match(matched,rr,op,st)
- # For each resource, use its freshest state; at equal times, a finding is conservative.
+ # Use a unique deletion/anonymization action close to the workflow report only to link
+ # the resource to this request. The final state still comes from point-in-time evidence.
+ report=dt(req.get('reported_at'));requested=dt(req.get('requested_at'))
+ if report:
+  for event_type,target in (('DELETE_RECORD','account_service'),('ANONYMIZE_RECORD','analytics_platform')):
+   if any(sy==target for sy,_,_,_ in matched):continue
+   candidates=[]
+   for a in activities or []:
+    at=dt(a.get('event_time'))
+    if not at or at>cut or at<requested or str(a.get('event_type') or '').upper()!=event_type:continue
+    if str(a.get('target_system') or '').casefold()!=target:continue
+    rid=str(a.get('resource_id') or '')
+    if (target=='account_service' and not rid.startswith('account_')) or (target=='analytics_platform' and not rid.startswith('analytics_')):continue
+    distance=abs((at-report).total_seconds())
+    if distance<=5400:candidates.append((distance,a))
+   if not candidates:continue
+   nearest=min(x[0] for x in candidates);best=[a for distance,a in candidates if distance==nearest]
+   if len(best)!=1:continue
+   a=best[0];rid=str(a.get('resource_id') or '')
+   linked=[r for r in records if r.system==target and r.rid==rid]
+   if linked:
+    newest=max(linked,key=lambda r:evidence_time(r) or datetime.min.replace(tzinfo=timezone.utc))
+    op,st=classify(newest,cut);add_match(matched,newest,op,st)
+   elif target=='account_service':
+    snapshots=[r for r in records if r.system=='account_service' and r.captured and any(k in r.collection.casefold() for k in ('customer_profiles','customer_accounts'))]
+    if snapshots:
+     latest_capture=max(r.captured for r in snapshots);latest=[r for r in snapshots if r.captured==latest_capture]
+     found=[r for r in latest if r.rid==rid]
+     if found:
+      for r in found:
+       op,st=classify(r,cut);add_match(matched,r,op,st)
+     else:
+      snapshot=sorted(latest,key=lambda r:r.eid)[-1]
+      rr=Rec(snapshot.eid,snapshot.captured,'account_service','readback',rid,{'resource_id':rid,'status_code':404},snapshot.captured);add_match(matched,rr,'VERIFY_RECORD_ABSENT','ABSENT')
+ # For each resource, use its freshest state; findings win only when evidence times tie.
  latest={}
  for (sy,rid,op,st),(r,_,_) in matched.items():
   when=evidence_time(r) or datetime.min.replace(tzinfo=timezone.utc)
