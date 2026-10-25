@@ -156,10 +156,12 @@ class PolicyRegression(unittest.TestCase):
   self.assertEqual(status,'COMPLETE')
   self.assertEqual([(x['operation'],x['evidence_id']) for x in steps],[('VERIFY_RECORD_ANONYMIZED','analytics_snapshot')])
 
-  def test_negated_japanese_deletion_request_is_not_applicable(self):
-   req={'email':'x@example.com','request_text':'削除しないでください','audit_at':'2026-09-02T00:00:00Z'}
+ def test_negated_japanese_deletion_request_is_not_applicable(self):
+  for phrase in ('削除しないでください','このデータの削除は希望していません'):
+   req={'email':'x@example.com','request_text':phrase,'audit_at':'2026-09-02T00:00:00Z'}
    status,steps=main.audit_case(req,[],[],main.Index(),[])
-   self.assertEqual(status,'NOT_APPLICABLE')
-   self.assertEqual(steps,[])
+   self.assertEqual(status,'NOT_APPLICABLE',phrase)
+   self.assertEqual(steps,[],phrase)
+
 
 if __name__=='__main__':unittest.main(verbosity=2)

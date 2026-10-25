@@ -63,8 +63,16 @@ jobs:
           path: |
             output.csv
             code.zip
-            sample_prediction.csv
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload public sample prediction (optional)
+        if: ${{ hashFiles('sample_prediction.csv') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-prediction-${{ github.run_number }}
+          path: sample_prediction.csv
+          if-no-files-found: ignore
           retention-days: 14
 
       - name: Commit generated submission files to this branch

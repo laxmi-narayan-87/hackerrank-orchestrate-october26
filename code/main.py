@@ -143,7 +143,7 @@ def authorized(text):
  # If a request explicitly asks for deletion, accompanying references to an old
  # export/download link or marketing do not turn it into a non-deletion request.
  # Explicit negation takes precedence over the Japanese deletion token.
- if re.search(r'(?:削除しないで|消去しないで|削除を(?:希望しません|望みません)|削除は不要|削除しなくてよい)',t):return False
+ if re.search(r'(?:削除しないで|消去しないで|削除しなくてよい|削除は不要|削除(?:は|を)?(?:希望していません|望んでいません|希望しません|望みません)|削除する必要はありません|このデータの削除は希望していません)',t):return False
  if any(term in t for term in ('削除','消去','アカウントを閉鎖','アカウントの削除')):return True
  if any(re.search(p,t,re.I) for p in DEL):return True
  # Requests to verify an already-completed deletion still authorize a deletion audit.
