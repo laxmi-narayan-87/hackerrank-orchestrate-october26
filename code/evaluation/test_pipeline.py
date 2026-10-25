@@ -64,6 +64,22 @@ class PolicyRegression(unittest.TestCase):
  def test_expired_security_retention_is_not_treated_as_required_retention(self):
   r=self.rec('security_service','security_audit_events','audit_record_1',{'subject_reference':'user_1','retention_until':'2026-08-31T00:00:00Z'})
   self.assertEqual(main.classify(r,main.dt('2026-09-01T00:00:00Z')),('REPORT_REMAINING_RECORD','PRESENT'))
+ def test_data_flow_negated_disabled_claim_is_reported_active(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  activities=[{'activity_id':'activity_flow_1','event_time':'2026-09-01T00:00:00Z','event_type':'CHECK_DATA_FLOW','resource_id':'data_flow_1','reported_result':'SUCCESS','details':'Check confirmed data_flow_1 is not disabled and can still sync data for x@example.com.'}]
+  status,steps=main.audit_case(req,ids,[],main.Index(),activities)
+  self.assertEqual(status,'INCOMPLETE')
+  self.assertIn(('REPORT_ACTIVE_DATA_FLOW','ACTIVE','activity_flow_1'),[(s['operation'],s['state'],s['evidence_id']) for s in steps if s['phase']=='FINDING'])
+
+ def test_data_flow_unambiguous_disabled_state_is_verified(self):
+  req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
+  ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
+  activities=[{'activity_id':'activity_flow_2','event_time':'2026-09-01T00:00:00Z','event_type':'CHECK_DATA_FLOW','resource_id':'data_flow_1','reported_result':'SUCCESS','details':'Check confirmed data_flow_1 is disabled for x@example.com.'}]
+  status,steps=main.audit_case(req,ids,[],main.Index(),activities)
+  self.assertEqual(status,'COMPLETE')
+  self.assertEqual([(s['operation'],s['state'],s['evidence_id']) for s in steps],[('VERIFY_DATA_FLOW_DISABLED','DISABLED','activity_flow_2')])
+
  def test_explicit_restore_check_is_evidence_but_generic_success_is_not(self):
   req={'email':'x@example.com','request_text':'Please delete my account','audit_at':'2026-09-02T00:00:00Z'}
   ids=[{'user_id':'user_1','name':'X User','email':'x@example.com','phone':'+15550000000','email_hash':'','updated_at':'2026-08-01T00:00:00Z'}]
