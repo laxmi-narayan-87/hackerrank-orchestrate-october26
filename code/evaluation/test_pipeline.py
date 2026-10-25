@@ -23,6 +23,10 @@ class Evidence(unittest.TestCase):
   r=main.Rec('e92',main.dt('2026-09-15T11:44:55Z'),'integration_service','connector_configurations','data_flow_123',{'enabled':True});self.assertEqual(main.classify(r),('REPORT_ACTIVE_DATA_FLOW','ACTIVE'))
  def test_restore(self):
   r=main.Rec('e92',main.dt('2026-09-15T11:44:55Z'),'backup_service','backup_catalog','backup_123',{'restore_allowed':True});self.assertEqual(main.classify(r),('REPORT_RESTORE_RISK','ACTIVE'))
+ def test_null_identifiers_are_not_exposed_pii(self):
+  r=main.Rec('e51',main.dt('2026-09-15T12:00:00Z'),'identity_service','deleted_customer_references','tombstone_9178',{'name':None,'email':None,'phone':None,'email_hash':None,'subject_reference':'user_542'});self.assertEqual(main.classify(r),('VERIFY_RECORD_REDACTED','REDACTED'))
+ def test_embedded_timestamp_does_not_override_late_capture(self):
+  ix=main.Index();ix.records=[main.Rec('e_future',main.dt('2026-09-03T00:00:00Z'),'search_service','customer_search_documents','search_1',{'email':'x@example.com'},main.dt('2026-09-01T00:00:00Z'))];records,_=ix.at(main.dt('2026-09-02T00:00:00Z'));self.assertEqual(records,[])
 class Validator(unittest.TestCase):
  def inp(self,d):
   p=d/'in.csv';p.write_text('case_id,email,requested_at,reported_status,reported_at,audit_at,request_text\ncase_01,a@example.com,2026-01-01T00:00:00Z,NOT_STARTED,2026-01-01T00:00:00Z,2026-01-02T00:00:00Z,delete my account\n',encoding='utf8');return p

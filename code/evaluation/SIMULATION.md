@@ -19,7 +19,7 @@ No live MiroFish backend is connected, so this is not a MiroFish run. Determinis
 - Starter `code/main.py` and `code/evaluation/main.py` were empty.
 - First local tests surfaced an import setup issue; registering dynamically imported modules fixed it.
 - Two negative test fixtures initially had malformed CSV quoting; corrected fixtures.
-- After these fixes, 13 synthetic tests passed.
+- After these fixes, 15 synthetic tests passed.
 - Full sample comparison and full 518-case generation were not executed in this environment because the local container could not clone from GitHub and does not contain the dataset. Dataset-level metrics are **not measured**, not passed.
 
 ## Next loop

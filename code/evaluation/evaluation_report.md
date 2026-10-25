@@ -16,13 +16,13 @@ python3 code/evaluation/main.py --input dataset/deletion_requests.csv --output o
 
 ## Tests and metrics
 
-The synthetic test suite contains 13 checks for deletion intent, export/correction non-deletion requests, point-in-time filtering, exact identity matching, operation/state mapping, deduplication/numbering, active flows, restore risks, tombstone redaction, and invalid output rejection. These tests were executed in the isolated working directory and passed.
+The synthetic test suite contains 15 checks for deletion intent, export/correction non-deletion requests, point-in-time filtering, exact identity matching, operation/state mapping, deduplication/numbering, active flows, restore risks, tombstone redaction, and invalid output rejection. These tests were executed in the isolated working directory and passed.
 
 - Hidden benchmark status accuracy: **Unknown — hidden labels unavailable**.
 - Hidden step-level accuracy: **Unknown — hidden labels unavailable**.
 - Hidden field-level accuracy: **Unknown — hidden labels unavailable**.
 - Hidden sequence accuracy: **Unknown — hidden labels unavailable**.
-- Synthetic tests: **13 passed**.
+- Synthetic tests: **15 passed**.
 - Full 518-case dataset run: **not executed here**; the local container could not resolve `github.com` to clone the dataset.
 - Public sample comparison: **not measured here**; run the documented command in a checkout to record actual numbers.
 
