@@ -2,32 +2,32 @@
 
 ## Simulation boundary
 
-No connected MiroFish service is available here, so this is not a live MiroFish run and no multi-agent forecast is claimed. These are deterministic contract scenarios covered by tests or intended validation checks.
+No live MiroFish backend is connected, so this is not a MiroFish run. Deterministic tests cover the bounded scenarios below.
 
-| Scenario | Perturbation | Expected behavior | Verification |
+| Scenario | Perturbation | Expected behavior | Evidence |
 |---|---|---|---|
-| Non-deletion intent | Request asks only for export | `NOT_APPLICABLE`, steps `[]` | Intent test and validator |
-| Similar email | Evidence is only a near-match | Do not use fuzzy joins | Exact identity test |
-| Future evidence | Capture time is after `audit_at` | Exclude evidence | Cutoff test |
-| Active flow | Matching connector enabled | Report flow; propose disable and verify | Classification test |
-| Backup restore | Backup restore allowed | Report restore risk | Classification test |
-| Tombstone PII | Stable reference plus direct IDs | Redact without deleting stable reference | Classification test |
-| Invalid output | Wrong op/state or non-empty N/A steps | Validator rejects | Negative validator tests |
+| Non-deletion intent | User asks only for export | `NOT_APPLICABLE`, steps `[]` | Intent test and validator |
+| Near-match email | Evidence has similar but different email | Do not fuzzy-join | Identity test |
+| Future evidence | Capture later than `audit_at` | Exclude evidence | Cutoff test |
+| Active flow | Connector explicitly enabled | Report flow; propose disable | Classification test |
+| Restore path | Backup restore allowed | Report restore risk | Classification test |
+| Tombstone PII | Stable reference plus identifiers | Redact without dropping stable reference | Classification test |
+| Invalid output | Wrong operation/state or N/A with steps | Validator rejects | Negative tests |
 
-## Findings from the development loop
+## Failure loop
 
-- Initially, both Python entry points were empty even though the README described a full pipeline.
-- The first local test run failed because dynamically imported dataclasses were not registered in `sys.modules`; the harness was fixed.
-- Two negative tests initially failed because their CSV fixtures were malformed; fixtures were corrected.
-- The local test suite then reported 13 passing tests.
-- A full public-sample score and 518-case run have not been produced: this isolated container cannot resolve `github.com` to clone the repository and the dataset is not mounted locally. The GitHub connector can inspect and write code but does not execute it. Dataset-level metrics are therefore **not measured**, not passed.
+- Starter `code/main.py` and `code/evaluation/main.py` were empty.
+- First local tests surfaced an import setup issue; registering dynamically imported modules fixed it.
+- Two negative test fixtures initially had malformed CSV quoting; corrected fixtures.
+- After these fixes, 13 synthetic tests passed.
+- Full sample comparison and full 518-case generation were not executed in this environment because the local container could not clone from GitHub and does not contain the dataset. Dataset-level metrics are **not measured**, not passed.
 
-## Next empirical loop
+## Next loop
 
-1. In a checkout of `main`, run the unit suite.
-2. Generate the 32-case public sample and run `--compare-sample`; review every mismatch.
-3. Generate the full output and run the structural validator.
-4. Review evidence warnings and sample cases with historical emails, support data, tombstones, active flows, backups, and cutoff boundaries.
-5. Record actual metrics and fix the largest repeatable error category before submission.
+1. Run the tests in a full checkout.
+2. Produce a prediction for the 32 public samples and compare every mismatch against `sample_output.csv`.
+3. Generate the full output and validate the structure.
+4. Manually inspect evidence warnings and cases involving history, support messages, tombstones, flows, backups, and cutoff timing.
+5. Report actual measured metrics and fix the largest repeatable failure.
 
-Syntactic validity is not evidence that predicted statuses are accurate. Public sample metrics are diagnostic only; hidden accuracy remains unknown.
+Valid JSON is not evidence of accurate statuses. Public sample metrics are diagnostic only; hidden accuracy remains unknown.
