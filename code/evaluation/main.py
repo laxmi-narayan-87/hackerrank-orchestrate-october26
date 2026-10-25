@@ -18,7 +18,14 @@ def validate(out,input_path,manifest=None):
  if len(ids)!=len(set(ids)):issues.append('duplicate case_id')
  if sorted(ids)!=sorted(expected):issues.append('output case_id set differs from input')
  if ids!=sorted(ids):issues.append('rows are not sorted')
- validids={x.get('file_id','') for x in read(manifest)} if manifest and Path(manifest).exists() else None;counts=Counter();nt=0
+ validids=None
+ if manifest and Path(manifest).exists():
+  validids={x.get('file_id','') for x in read(manifest)}
+  base=Path(manifest).parent
+  for filename,key in (('system_activity.csv','activity_id'),('user_audit_log.csv','audit_id')):
+   evidence_path=base/filename
+   if evidence_path.exists():validids.update(x.get(key,'') for x in read(evidence_path))
+ counts=Counter();nt=0
  for row in rows:
   cid=row.get('case_id','');status=row.get('deletion_status','');counts[status]+=1
   if status not in STATUSES:issues.append(f'{cid}: invalid status {status!r}')
