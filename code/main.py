@@ -283,17 +283,23 @@ def audit_case(req,ids,audits,index,activities=None):
    line_time=dt(stamp.group(1)) if stamp else None
    if line_time and line_time>cut:continue
    parsed.append((line,line_time))
-  groups={}
-  for ix,(line,line_time) in enumerate(parsed):
-   tr=re.search(r'\btrace_id=([^\s]+)',line,re.I)
-   group=tr.group(1) if tr else f'line_{ix}'
-   groups.setdefault(group,[]).append((line,line_time))
+  # OCR may place a subject and its resource on separate lines. Join only a
+  # single-resource document; otherwise keep trace IDs as the correlation boundary.
+  doc_ids=set(re.findall(r'\b(?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_[a-z0-9_-]+\b',body,re.I))
+  if path.casefold().endswith(('.pdf','.png','.jpg','.jpeg','.webp')) and len(doc_ids)==1 and any(contains_identifier(body.casefold(),token) for token in identifiers):
+   groups={'document':parsed}
+  else:
+   groups={}
+   for ix,(line,line_time) in enumerate(parsed):
+    tr=re.search(r'\btrace_id=([^\s]+)',line,re.I)
+    group=tr.group(1) if tr else f'line_{ix}'
+    groups.setdefault(group,[]).append((line,line_time))
   for group in groups.values():
    combined=' '.join(line for line,_ in group).casefold()
    known={key[1] for key in matched}
    if not any(contains_identifier(combined,token) for token in identifiers) and not any(contains_identifier(combined,rid) for rid in known):continue
    for line,line_time in group:
-    m=re.search(r'resource_id[=\\"\']+([a-z0-9_-]+)',line,re.I)
+    m=re.search(r"resource[_ ]id\s*[:=]\s*[\"']?([a-z0-9_-]+)",line,re.I) or re.search(r"\b((?:account|search|analytics|support|data_flow|backup|export|tombstone|audit_record|cache|email_delivery|marketing)_[a-z0-9_-]+)\b",line,re.I)
     if not m:continue
     rid=m.group(1);sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
     if any(q in combined for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')):op,st='VERIFY_RECORD_ABSENT','ABSENT'
