@@ -357,7 +357,8 @@ def audit_case(req,ids,audits,index,activities=None):
    else:continue
   elif typ=='CHECK_RESTORE_ACCESS':
    if any(x in details for x in ('can still be restored','can be restored','restore allowed','remains restorable')):op,st,sy='REPORT_RESTORE_RISK','ACTIVE','backup_service'
-   elif any(x in details for x in ('blocked','cannot be restored','not restorable','restore denied')):op,st,sy='VERIFY_RESTORE_BLOCKED','BLOCKED','backup_service'
+   elif any(x in details for x in ('not blocked','is not blocked','not currently blocked','remains possible','remains possible to restore','restore remains possible','restore access is not blocked','restore is still allowed')):op,st,sy='REPORT_RESTORE_RISK','ACTIVE','backup_service'
+   elif any(x in details for x in ('blocked','cannot be restored','not restorable','restore denied','restore access is blocked')):op,st,sy='VERIFY_RESTORE_BLOCKED','BLOCKED','backup_service'
    else:continue
   else:continue
   rr=Rec(str(a.get('activity_id') or ''),at,sy,'activity_check',rid,{'resource_id':rid,'details':details},at);add_match(matched,rr,op,st)
