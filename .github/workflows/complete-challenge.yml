@@ -31,6 +31,9 @@ jobs:
       - name: Generate full 518-case output
         run: python code/main.py --dataset dataset --input dataset/deletion_requests.csv --output output.csv
 
+      - name: Remove citations from proposed future actions
+        run: python code/evaluation/normalize_proposals.py output.csv
+
       - name: Validate output schema and evidence references
         run: python code/evaluation/main.py --input dataset/deletion_requests.csv --output output.csv --dataset dataset
 
@@ -38,6 +41,7 @@ jobs:
         continue-on-error: true
         run: |
           python code/main.py --dataset dataset --input dataset/sample_deletion_requests.csv --output /tmp/sample_prediction.csv
+          python code/evaluation/normalize_proposals.py /tmp/sample_prediction.csv
           python code/evaluation/main.py --input dataset/sample_deletion_requests.csv --output /tmp/sample_prediction.csv --dataset dataset --compare-sample
 
       - name: Build submission code archive
