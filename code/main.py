@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deletion audit baseline, offline and non-destructive."""
 from __future__ import annotations
-import argparse,csv,hashlib,json,re,sqlite3,sys
+import argparse,csv,hashlib,json,re,sqlite3,sys,shutil,subprocess
 from dataclasses import dataclass
 from datetime import datetime,timezone
 from pathlib import Path
@@ -70,6 +70,9 @@ def sqlrecs(path,eid,captured):
     try:payload=json.loads(raw) if isinstance(raw,str) else {}
     except json.JSONDecodeError:payload={'raw_record':raw}
     if not isinstance(payload,dict):payload={'raw_record':raw}
+    # Preserve direct SQL columns as evidence; many snapshots do not wrap rows in JSON.
+    for key,value in rawrow.items():
+     if key not in {rid,dc,sc,cc,tc} and value is not None:payload.setdefault(key,value)
     payload.setdefault('resource_id',str(rawrow.get(rid)))
     if sc and rawrow.get(sc):payload.setdefault('data_store',rawrow[sc])
     if cc and rawrow.get(cc):payload.setdefault('collection',rawrow[cc])
@@ -104,7 +107,14 @@ def make_index(dataset):
      if q.startswith('{') and q.endswith('}'):
       try:idx.records.extend(jsonrecs(json.loads(q),eid,t,rel))
       except json.JSONDecodeError:pass
-   elif ext in {'.pdf','.png','.jpg','.jpeg','.webp'}:idx.warnings.append(f'{eid}: OCR not implemented ({ext})')
+   elif ext=='.pdf':
+    tool=shutil.which('pdftotext')
+    if tool:
+     result=subprocess.run([tool,'-layout',str(p),'-'],capture_output=True,text=True,timeout=20,check=False)
+     if result.returncode==0 and result.stdout:idx.text.append((eid,t,rel,result.stdout))
+     else:idx.warnings.append(f'{eid}: PDF text extraction failed')
+    else:idx.warnings.append(f'{eid}: PDF text extraction unavailable')
+   elif ext in {'.png','.jpg','.jpeg','.webp'}:idx.warnings.append(f'{eid}: OCR not implemented ({ext})')
   except (OSError,json.JSONDecodeError,UnicodeError) as e:idx.warnings.append(f'{eid}: {type(e).__name__}: {e}')
  return idx
 NONDEL=[r'\b(access|export|download|copy of my data|correct|rectify|update my (?:name|email|address)|change my email|opt[ -]?out|unsubscribe|stop (?:the )?marketing|marketing preferences|recover my account)\b',r'\b(acceso a mis datos|descargar mis datos|exportar mis datos|corregir mis datos|actualizar mis datos|cancelar la suscripci[oó]n|dejar de recibir publicidad)\b',r'\b(acc[eè]s [àa] mes donn[eé]es|exporter mes donn[eé]es|corriger mes donn[eé]es|modifier mon adresse e-mail)\b']
@@ -158,22 +168,44 @@ def has_direct_pii(obj):
  elif isinstance(obj,list):
   return any(has_direct_pii(v) for v in obj)
  return False
-def classify(r):
- d=r.data;sy=r.system;co=r.collection;rid=r.rid;s=(sy+' '+co+' '+rid).casefold();exposed=has_direct_pii(d)
+def has_linkable_reference(obj):
+ fields={'user_id','customer_reference','subject_reference','customer_id','account_id','user_ref','customer_ref','profile_id','subject_id','external_user_id'}
+ if isinstance(obj,dict):
+  for key,value in obj.items():
+   if str(key).casefold() in fields and value is not None and str(value).strip():return True
+   if has_linkable_reference(value):return True
+ elif isinstance(obj,list):return any(has_linkable_reference(v) for v in obj)
+ return False
+def is_attachment(r):
+ s=(r.system+' '+r.collection+' '+r.rid+' '+str(r.data.get('record_type',''))+' '+str(r.data.get('category',''))+' '+str(r.data.get('file_name',''))+' '+str(r.data.get('attachment_id',''))).casefold()
+ return any(k in s for k in ('attachment','support_file','uploaded_document','identity_document'))
+def classify(r,cut=None):
+ d=r.data;sy=r.system;co=r.collection;rid=r.rid;s=(sy+' '+co+' '+rid+' '+' '.join(str(d.get(k,'')) for k in ('record_type','category','data_category','file_name','attachment_id'))).casefold()
+ exposed=has_direct_pii(d);linked=has_linkable_reference(d)
  if 'tombstone' in s or 'deleted_customer_references' in s:return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_REDACTED','REDACTED')
  if 'connector' in s or 'integration' in sy or rid.startswith('data_flow_'):
-  v=d.get('enabled')
+  v=d.get('enabled',d.get('is_enabled',d.get('active')))
   if v is True or str(v).casefold() in {'true','1','enabled','active'}:return 'REPORT_ACTIVE_DATA_FLOW','ACTIVE'
-  if v is False or str(v).casefold() in {'false','0','disabled','stopped'}:return 'VERIFY_DATA_FLOW_DISABLED','DISABLED'
+  if v is False or str(v).casefold() in {'false','0','disabled','stopped','inactive'}:return 'VERIFY_DATA_FLOW_DISABLED','DISABLED'
  if 'backup' in s or rid.startswith('backup_'):
-  v=d.get('restore_allowed')
-  if v is True or str(v).casefold() in {'true','1','allowed','active'}:return 'REPORT_RESTORE_RISK','ACTIVE'
-  if v is False or str(v).casefold() in {'false','0','blocked','denied'}:return 'VERIFY_RESTORE_BLOCKED','BLOCKED'
- if 'security' in sy or 'audit_record' in rid.casefold():return 'VERIFY_RECORD_PRESENT','PRESENT'
- if 'support' in s:return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_REDACTED','REDACTED')
- if 'analytics' in s or 'telemetry' in s:return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_ANONYMIZED','ANONYMIZED')
+  v=d.get('restore_allowed',d.get('restore_enabled',d.get('can_restore')))
+  if v is True or str(v).casefold() in {'true','1','allowed','active','enabled'}:return 'REPORT_RESTORE_RISK','ACTIVE'
+  if v is False or str(v).casefold() in {'false','0','blocked','denied','disabled'}:return 'VERIFY_RESTORE_BLOCKED','BLOCKED'
+ if 'legal_hold' in s or 'legal hold' in s:
+  active=d.get('active',d.get('is_active',d.get('hold_status',d.get('status'))))
+  if active is True or str(active).casefold() in {'true','1','active','open','held','in_force'}:return 'VERIFY_RECORD_PRESENT','PRESENT'
+  if active is False or str(active).casefold() in {'false','0','inactive','released','closed','expired'}:return 'REPORT_REMAINING_RECORD','PRESENT'
+ if 'security' in sy or 'audit_record' in rid.casefold():
+  until=dt(str(d.get('retention_until') or d.get('retain_until') or ''));at=cut or r.time
+  if until and at and until<at:return 'REPORT_REMAINING_RECORD','PRESENT'
+  return 'VERIFY_RECORD_PRESENT','PRESENT'
+ if 'support' in s:
+  if is_attachment(r):return 'REPORT_REMAINING_RECORD','PRESENT'
+  return ('REPORT_EXPOSED_PII','PRESENT') if exposed or linked else ('VERIFY_RECORD_REDACTED','REDACTED')
+ if 'analytics' in s or 'telemetry' in s:
+  return ('REPORT_EXPOSED_PII','PRESENT') if exposed or linked else ('VERIFY_RECORD_ANONYMIZED','ANONYMIZED')
  if 'email_delivery' in s:return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_REDACTED','REDACTED')
- if any(x in s for x in ('export','marketing','search','cache')):return 'REPORT_REMAINING_RECORD','PRESENT'
+ if any(x in s for x in ('export','marketing','search','cache','secondary_identifier','object_storage')):return 'REPORT_REMAINING_RECORD','PRESENT'
  if 'account' in sy or rid.startswith('account_'):
   st=str(d.get('account_status') or d.get('status') or '').casefold()
   if st in {'deleted','absent','not_found','not found'}:return 'VERIFY_RECORD_ABSENT','ABSENT'
@@ -184,12 +216,13 @@ def sortsteps(steps):
  unique={(x['phase'],x['system_id'],x['resource_id'],x['operation'],x['state']):x for x in steps};out=list(unique.values());out.sort(key=lambda x:(PHASE[x['phase']],ORDER[x['operation']],x['system_id'],x['resource_id']))
  for i,x in enumerate(out,1):x['step_no']=i
  return out
-def plan(op,sy,rid,co):
+def plan(op,sy,rid,co,data=None):
  if op=='REPORT_ACTIVE_DATA_FLOW':return 'DISABLE_DATA_FLOW','DISABLED','VERIFY_DATA_FLOW_DISABLED'
  if op=='REPORT_RESTORE_RISK':return 'BLOCK_RESTORE','BLOCKED','VERIFY_RESTORE_BLOCKED'
  if op=='REPORT_REMAINING_RECORD':return 'DELETE_RECORD','ABSENT','VERIFY_RECORD_ABSENT'
- if op=='REPORT_EXPOSED_PII':return ('ANONYMIZE_RECORD','ANONYMIZED','VERIFY_RECORD_ANONYMIZED') if 'analytics' in (sy+' '+co+' '+rid).casefold() else ('REDACT_RECORD','REDACTED','VERIFY_RECORD_REDACTED')
-def audit_case(req,ids,audits,index):
+ if op=='REPORT_EXPOSED_PII':
+  return ('ANONYMIZE_RECORD','ANONYMIZED','VERIFY_RECORD_ANONYMIZED') if any(x in (sy+' '+co+' '+rid).casefold() for x in ('analytics','telemetry')) else ('REDACT_RECORD','REDACTED','VERIFY_RECORD_REDACTED')
+def audit_case(req,ids,audits,index,activities=None):
  if not authorized(req.get('request_text','')):return 'NOT_APPLICABLE',[]
  cut=dt(req.get('audit_at'))
  if not cut:return 'INCOMPLETE',[]
@@ -198,37 +231,59 @@ def audit_case(req,ids,audits,index):
  records,texts=index.at(cut);matched={}
  for r in records:
   if matches(r,subject):
-   op,st=classify(r);matched.setdefault((r.system,r.rid,op,st),(r,op,st))
+   op,st=classify(r,cut);matched.setdefault((r.system,r.rid,op,st),(r,op,st))
+ identifiers={x for x in (subject['emails']|subject['phones']|subject['hashes']|{n(subject['user_id'])}) if x}
  for eid,t,path,body in texts:
   for line in body.splitlines():
-   low=line.casefold();emails=[e for e in subject['emails'] if e and e in low]
-   if not emails:continue
-   m=re.search(r'resource_id[=\"\']+([a-z0-9_-]+)',line,re.I)
+   stamp=re.match(r'^\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)',line)
+   line_time=dt(stamp.group(1)) if stamp else None
+   if line_time and line_time>cut:continue
+   low=line.casefold()
+   if not any(token in low for token in identifiers):continue
+   m=re.search(r'resource_id[=\\"\']+([a-z0-9_-]+)',line,re.I)
    if not m:continue
-   rid=m.group(1);sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service')] if rid.startswith(prefix)),'unknown_system')
+   rid=m.group(1);sy=next((v for prefix,v in [('account_','account_service'),('search_','search_service'),('analytics_','analytics_platform'),('support_','support_platform'),('data_flow_','integration_service'),('backup_','backup_service'),('export_','export_service'),('tombstone_','identity_service'),('audit_record_','security_service'),('cache_','cache_service'),('email_delivery_','email_delivery_service')] if rid.startswith(prefix)),'unknown_system')
    if any(q in low for q in ('rows=0','http_status=404','status_code=404','result=miss','total_hits=0')):op,st='VERIFY_RECORD_ABSENT','ABSENT'
-   elif 'enabled=false' in low:op,st='VERIFY_DATA_FLOW_DISABLED','DISABLED'
-   elif 'restore_allowed=false' in low:op,st='VERIFY_RESTORE_BLOCKED','BLOCKED'
-   elif any(q in low for q in ('result=hit','rows=1','http_status=200','total_hits=1')):
+   elif 'enabled=false' in low or 'restore_allowed=false' in low or 'restore blocked' in low or 'cannot be restored' in low:op,st=('VERIFY_DATA_FLOW_DISABLED','DISABLED') if rid.startswith('data_flow_') or 'enabled=false' in low else ('VERIFY_RESTORE_BLOCKED','BLOCKED')
+   elif 'attachment_pii_scan' in low:op,st='REPORT_REMAINING_RECORD','PRESENT'
+   elif any(q in low for q in ('message_pii_scan','analytics_identity_scan')):op,st='REPORT_EXPOSED_PII','PRESENT'
+   elif any(q in low for q in ('remains enabled','remains active','still enabled','still active','restore_candidate_evaluated eligible=true','can still be restored','restore access remains allowed')):op,st=('REPORT_ACTIVE_DATA_FLOW','ACTIVE') if rid.startswith('data_flow_') else ('REPORT_RESTORE_RISK','ACTIVE') if rid.startswith('backup_') else ('REPORT_REMAINING_RECORD','PRESENT')
+   elif any(q in low for q in ('result=hit','rows=1','http_status=200','total_hits=1','result=found')):
     op,st=('REPORT_REMAINING_RECORD','PRESENT') if rid.startswith(('account_','search_','export_','marketing_','cache_')) else ('REPORT_EXPOSED_PII','PRESENT')
     if rid.startswith('data_flow_'):op,st='REPORT_ACTIVE_DATA_FLOW','ACTIVE'
     if rid.startswith('backup_'):op,st='REPORT_RESTORE_RISK','ACTIVE'
    else:continue
-   rr=Rec(eid,t,sy,'readback',rid,{'resource_id':rid,'matched_email':emails[0]},t);matched.setdefault((sy,rid,op,st),(rr,op,st))
+   rr=Rec(eid,t,sy,'readback',rid,{'resource_id':rid,'matched_identifier':next((token for token in identifiers if token in low),''),'event':low},line_time or t);matched.setdefault((sy,rid,op,st),(rr,op,st))
+ # Only explicit state checks are evidence; generic SUCCESS/FAILED activity rows are claims.
+ for a in activities or []:
+  at=dt(a.get('event_time'))
+  if not at or at>cut:continue
+  rid=str(a.get('resource_id') or '');typ=str(a.get('event_type') or '').upper();details=str(a.get('details') or '').casefold()
+  if not rid or not (rid in {key[1] for key in matched} or any(token in details for token in identifiers)):continue
+  if typ=='CHECK_DATA_FLOW':
+   if any(x in details for x in ('remains enabled','still enabled','remains active','still active','confirmed enabled')):op,st,sy='REPORT_ACTIVE_DATA_FLOW','ACTIVE','integration_service'
+   elif any(x in details for x in ('disabled','not enabled','inactive','stopped')):op,st,sy='VERIFY_DATA_FLOW_DISABLED','DISABLED','integration_service'
+   else:continue
+  elif typ=='CHECK_RESTORE_ACCESS':
+   if any(x in details for x in ('can still be restored','can be restored','restore allowed','remains restorable')):op,st,sy='REPORT_RESTORE_RISK','ACTIVE','backup_service'
+   elif any(x in details for x in ('blocked','cannot be restored','not restorable','restore denied')):op,st,sy='VERIFY_RESTORE_BLOCKED','BLOCKED','backup_service'
+   else:continue
+  else:continue
+  rr=Rec(str(a.get('activity_id') or ''),at,sy,'activity_check',rid,{'resource_id':rid,'details':details},at);matched.setdefault((sy,rid,op,st),(rr,op,st))
  findings=[];verify=[];rem=[]
  for (sy,rid,op,st),(r,_,_) in matched.items():
   ph=OP[op][0];(findings if ph=='FINDING' else verify).append(step(ph,sy,rid,op,st,r.eid))
  for f in findings:
-  r=next((z for z,_,_ in matched.values() if z.system==f['system_id'] and z.rid==f['resource_id']),None);q=plan(f['operation'],f['system_id'],f['resource_id'],r.collection if r else '')
+  r=next((z for z,_,_ in matched.values() if z.system==f['system_id'] and z.rid==f['resource_id']),None);q=plan(f['operation'],f['system_id'],f['resource_id'],r.collection if r else '',r.data if r else {})
   if q:
    rop,rst,vop=q;rem.append(step('REMEDIATION',f['system_id'],f['resource_id'],rop,rst,''));verify.append(step('VERIFICATION',f['system_id'],f['resource_id'],vop,rst,''))
  if findings:return 'INCOMPLETE',sortsteps(findings+rem+verify)
  if verify:return 'COMPLETE',sortsteps(verify)
  return 'INCOMPLETE',[]
 def run(dataset,input_path,output):
- requests=readcsv(input_path);ids=readcsv(dataset/'user_identities.csv');audits=readcsv(dataset/'user_audit_log.csv');ix=make_index(dataset);rows=[]
+ requests=readcsv(input_path);ids=readcsv(dataset/'user_identities.csv');audits=readcsv(dataset/'user_audit_log.csv');activities=readcsv(dataset/'system_activity.csv') if (dataset/'system_activity.csv').is_file() else [];ix=make_index(dataset);rows=[]
  for req in requests:
-  status,steps=audit_case(req,ids,audits,ix);rows.append({'case_id':req.get('case_id',''),'deletion_status':status,'steps_json':json.dumps(steps,ensure_ascii=False,separators=(',',':'))})
+  status,steps=audit_case(req,ids,audits,ix,activities);rows.append({'case_id':req.get('case_id',''),'deletion_status':status,'steps_json':json.dumps(steps,ensure_ascii=False,separators=(',',':'))})
  rows.sort(key=lambda x:x['case_id']);output.parent.mkdir(parents=True,exist_ok=True)
  with output.open('w',encoding='utf-8',newline='') as f:w=csv.DictWriter(f,fieldnames=HEADER,lineterminator='\n');w.writeheader();w.writerows(rows)
  return {'cases':len(rows),'statuses':{s:sum(r['deletion_status']==s for r in rows) for s in ('COMPLETE','INCOMPLETE','NOT_APPLICABLE')},'evidence_records':len(ix.records),'evidence_files':len(readcsv(dataset/'evidence_files.csv')),'warning_count':len(ix.warnings),'warnings':ix.warnings[:12]}
