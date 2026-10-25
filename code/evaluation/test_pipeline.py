@@ -71,7 +71,7 @@ class PolicyRegression(unittest.TestCase):
    {'activity_id':'activity_check_1','event_time':'2026-09-01T00:00:00Z','event_type':'CHECK_RESTORE_ACCESS','resource_id':'backup_1','reported_result':'SUCCESS','details':'Restore-access check confirmed archive backup_1 can still be restored for x@example.com.'},
    {'activity_id':'activity_claim_1','event_time':'2026-09-01T00:01:00Z','event_type':'DELETE_RECORD','resource_id':'account_1','reported_result':'SUCCESS','details':'Deletion worker submitted account_1 for x@example.com.'}
   ]
-  status,steps=main.audit_case(req,ids,[],main.Index(),activities)
+  ix=main.Index();ix.records=[main.Rec('evidence_backup',main.dt('2026-08-30T00:00:00Z'),'backup_service','backup_catalog','backup_1',{'email':'x@example.com','restore_allowed':False},main.dt('2026-08-30T00:00:00Z'))];status,steps=main.audit_case(req,ids,[],ix,activities)
   self.assertEqual(status,'INCOMPLETE')
   self.assertEqual([(s['operation'],s['evidence_id']) for s in steps if s['phase']=='FINDING'],[('REPORT_RESTORE_RISK','activity_check_1')])
   self.assertFalse(any(s['evidence_id']=='activity_claim_1' for s in steps))
