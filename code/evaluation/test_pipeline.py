@@ -77,12 +77,13 @@ class PolicyRegression(unittest.TestCase):
   self.assertFalse(any(s['evidence_id']=='activity_claim_1' for s in steps))
  def test_validator_accepts_activity_ids_as_evidence(self):
   with tempfile.TemporaryDirectory() as td:
-   d=Path(td);inp=self.inp(d);out=d/'out.csv';manifest=d/'evidence_files.csv'
+   d=Path(td);inp=d/'in.csv';out=d/'out.csv';manifest=d/'evidence_files.csv'
+   inp.write_text('case_id,email,requested_at,reported_status,reported_at,audit_at,request_text\ncase_01,a@example.com,2026-01-01T00:00:00Z,NOT_STARTED,2026-01-01T00:00:00Z,2026-01-02T00:00:00Z,delete my account\n',encoding='utf8')
    manifest.write_text('file_id,file_path,origin,captured_at\n',encoding='utf8')
    (d/'system_activity.csv').write_text('activity_id,event_time,event_type,source_system,target_system,resource_id,reported_result,details\nactivity_1,2026-09-01T00:00:00Z,CHECK_RESTORE_ACCESS,worker,backup_service,backup_1,SUCCESS,restore check\n',encoding='utf8')
    (d/'user_audit_log.csv').write_text('audit_id,user_id,event_time,field_name,old_value,new_value\n',encoding='utf8')
    steps=[{'step_no':1,'phase':'FINDING','system_id':'backup_service','resource_id':'backup_1','operation':'REPORT_RESTORE_RISK','state':'ACTIVE','evidence_id':'activity_1'},{'step_no':2,'phase':'REMEDIATION','system_id':'backup_service','resource_id':'backup_1','operation':'BLOCK_RESTORE','state':'BLOCKED','evidence_id':''},{'step_no':3,'phase':'VERIFICATION','system_id':'backup_service','resource_id':'backup_1','operation':'VERIFY_RESTORE_BLOCKED','state':'BLOCKED','evidence_id':''}]
-   self.out(out,'INCOMPLETE',steps);result=ev.validate(out,inp,manifest)
+   with out.open('w',newline='',encoding='utf8') as handle:\n    writer=csv.DictWriter(handle,fieldnames=['case_id','deletion_status','steps_json']);writer.writeheader();writer.writerow({'case_id':'case_01','deletion_status':'INCOMPLETE','steps_json':json.dumps(steps)})\n   result=ev.validate(out,inp,manifest)
    self.assertTrue(result['valid'],result['issues'])
 
 if __name__=='__main__':unittest.main(verbosity=2)
