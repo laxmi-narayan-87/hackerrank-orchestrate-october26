@@ -32,7 +32,7 @@ class Rec:
 def infer(path,d,ctx=None):
  ctx=ctx or {};low=(path+' '+' '.join(str(v) for v in ctx.values())+' '+' '.join(f'{k} {v}' for k,v in d.items())).casefold();s=str(d.get('data_store') or d.get('origin_system') or d.get('system_id') or ctx.get('data_store') or ctx.get('origin_system') or '').casefold();c=str(d.get('collection') or d.get('collection_name') or ctx.get('collection') or ctx.get('collection_name') or '').casefold()
  if not s:
-  for key,val in [('tombstone','identity_service'),('identity_service','identity_service'),('account','account_service'),('search','search_service'),('analytics','analytics_platform'),('support','support_platform'),('backup','backup_service'),('export','export_service'),('connector','integration_service'),('marketing','marketing_platform'),('security','security_service'),('email_delivery','email_delivery_service'),('cache','cache_service'),('telemetry','telemetry_service'),('object_storage','object_storage')]:
+  for key,val in [('tombstone','identity_service'),('identity_service','identity_service'),('customer_profiles','account_service'),('customer_accounts','account_service'),('account','account_service'),('search','search_service'),('analytics','analytics_platform'),('support','support_platform'),('backup','backup_service'),('export','export_service'),('connector','integration_service'),('marketing','marketing_platform'),('security','security_service'),('email_delivery','email_delivery_service'),('cache','cache_service'),('telemetry','telemetry_service'),('object_storage','object_storage')]:
    if key in low:s=val;break
  if not s:s='unknown_system'
  if not c:
@@ -73,7 +73,7 @@ def sqlrecs(path,eid,captured):
     # Preserve direct SQL columns as evidence; many snapshots do not wrap rows in JSON.
     for key,value in rawrow.items():
      if key not in {rid,dc,sc,cc,tc} and value is not None:payload.setdefault(key,value)
-    payload.setdefault('resource_id',str(rawrow.get(rid)))
+    payload.setdefault('resource_id',str(rawrow.get(rid)));payload.setdefault('table_name',table);payload.setdefault('collection',table)
     if sc and rawrow.get(sc):payload.setdefault('data_store',rawrow[sc])
     if cc and rawrow.get(cc):payload.setdefault('collection',rawrow[cc])
     s,c=infer(str(path),payload);out.append(Rec(eid,captured,s,c,str(rawrow[rid]),payload,dt(str(rawrow.get(tc) or '')) if tc else None))
@@ -177,7 +177,7 @@ def has_linkable_reference(obj):
  elif isinstance(obj,list):return any(has_linkable_reference(v) for v in obj)
  return False
 def is_attachment(r):
- s=(r.system+' '+r.collection+' '+r.rid+' '+str(r.data.get('record_type',''))+' '+str(r.data.get('category',''))+' '+str(r.data.get('file_name',''))+' '+str(r.data.get('attachment_id',''))).casefold()
+ s=(r.system+' '+r.collection+' '+r.rid+' '+' '.join(str(r.data.get(k,'')) for k in ('record_type','category','data_category','file_name','filename','attachment_id','attachment_name','resource_type','artifact_type','file'))).casefold()
  return any(k in s for k in ('attachment','support_file','uploaded_document','identity_document'))
 def classify(r,cut=None):
  d=r.data;sy=r.system;co=r.collection;rid=r.rid;s=(sy+' '+co+' '+rid+' '+' '.join(str(d.get(k,'')) for k in ('record_type','category','data_category','file_name','attachment_id'))).casefold()
@@ -201,7 +201,7 @@ def classify(r,cut=None):
   return 'VERIFY_RECORD_PRESENT','PRESENT'
  if 'support' in s:
   if is_attachment(r):return 'REPORT_REMAINING_RECORD','PRESENT'
-  return ('REPORT_EXPOSED_PII','PRESENT') if exposed or linked else ('VERIFY_RECORD_REDACTED','REDACTED')
+  return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_REDACTED','REDACTED')
  if 'analytics' in s or 'telemetry' in s:
   return ('REPORT_EXPOSED_PII','PRESENT') if exposed or linked else ('VERIFY_RECORD_ANONYMIZED','ANONYMIZED')
  if 'email_delivery' in s:return ('REPORT_EXPOSED_PII','PRESENT') if exposed else ('VERIFY_RECORD_REDACTED','REDACTED')
